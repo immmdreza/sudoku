@@ -1,0 +1,13 @@
+[package]
+name = "sudoku-bevy"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sudoku-solver = { version = "0.1.0", path = "../sudoku-solver" }
+bevy = { version = "0.18.0-rc.1", default-features = false, features = [
+    "2d",
+    "dynamic_linking",
+] }
+bevy_dylib = { version = "0.18.0-rc.1" }
+sudoku-samples = { version = "0.1.0", path = "../sudoku-samples" }

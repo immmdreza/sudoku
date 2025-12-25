@@ -1,0 +1,7 @@
+[package]
+name = "sudoku-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+sudoku-solver = { version = "0.1.0", path = "../sudoku-solver" }

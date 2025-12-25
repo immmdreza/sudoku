@@ -1,0 +1,134 @@
+use sudoku_solver::SudokuBoard;
+
+// A board demo
+// +---+---+---+---+---+---+---+---+---+
+// |  ███████  |           |           |
+// +  ██       +           +           +
+// |  ███████  |           |           |
+// +       ██  +           +           +
+// |  ███████  |           |           |
+// +---+---+---+---+---+---+---+---+---+
+// | 1 | 2 | 3 |           |           |
+// +---+---+---+           +           +
+// | 4 |   | 6 |           |           |
+// +---+---+---+           +           +
+// | 7 | 8 | ? |           |           |
+// +---+---+---+---+---+---+---+---+---+
+// |           |           |           |
+// +           +           +           +
+// |           |           |           |
+// +           +           +           +
+// |           |           |           |
+// +---+---+---+---+---+---+---+---+---+
+
+pub fn print_board() {
+    // A block where all nine number are possible for demonstration.
+    // +---+---+---+
+    // | 1 | 2 | 3 |
+    // +---+---+---+
+    // | 4 | 5 | 6 |
+    // +---+---+---+
+    // | 7 | 8 | 9 |
+    // +---+---+---+
+    //
+    // A block where the number 5 is fixed or resolved.
+    // +---+---+---+
+    // |  ███████  |
+    // +  ██       +
+    // |  ███████  |
+    // +       ██  +
+    // |  ███████  |
+    // +---+---+---+
+    //
+    // A block where the number 1 is fixed or resolved.
+    // +---+---+---+
+    // |   ████    |
+    // +     ██    +
+    // |     ██    |
+    // +     ██    +
+    // |     ██    |
+    // +---+---+---+
+    //
+    // A block where the number 2 is fixed or resolved.
+    // +---+---+---+
+    // |  ███████  |
+    // +       ██  +
+    // |  ███████  |
+    // +  ██      +
+    // |  ███████  |
+    // +---+---+---+
+    //
+    // A block where the number 3 is fixed or resolved.
+    // +---+---+---+
+    // |  ███████  |
+    // +       ██  +
+    // |  ███████  |
+    // +       ██  +
+    // |  ███████  |
+    // +---+---+---+
+    //
+    // A block where the number 4 is fixed or resolved.
+    // +---+---+---+
+    // | ██    ██  |
+    // + ██    ██  +
+    // | ████████  |
+    // +       ██  +
+    // |       ██  |
+    // +---+---+---+
+    //
+    // A block where the number 6 is fixed or resolved.
+    // +---+---+---+
+    // |  ███████  |
+    // +  ██       +
+    // |  ███████  |
+    // +  ██   ██  +
+    // |  ███████  |
+    // +---+---+---+
+    //
+    // A block where the number 7 is fixed or resolved.
+    // +---+---+---+
+    // |  ███████  |
+    // +       ██  +
+    // |      ██   |
+    // +     ██    +
+    // |    ██     |
+    // +---+---+---+
+    //
+    // A block where the number 8 is fixed or resolved.
+    // +---+---+---+
+    // |  ███████  |
+    // +  ██   ██  +
+    // |  ███████  |
+    // +  ██   ██  +
+    // |  ███████  |
+    // +---+---+---+
+    //
+    // A block where the number 9 is fixed or resolved.
+    // +---+---+---+
+    // |  ███████  |
+    // +  ██   ██  +
+    // |  ███████  |
+    // +       ██  +
+    // |  ███████  |
+    // +---+---+---+
+    //
+    // A block where the number is unresolved.
+    // +---+---+---+
+    // |           |
+    // +           +
+    // |           |
+    // +           +
+    // |           |
+    // +---+---+---+
+    //
+    // Now print the board using the above representations.
+}
+
+struct SudokuBoardConsolVisual<'s> {
+    board: &'s SudokuBoard,
+    canvas: [[char; 37]; 19],
+}
+
+impl<'s> SudokuBoardConsolVisual<'s> {
+    fn fill_canvas(&mut self) {}
+}
