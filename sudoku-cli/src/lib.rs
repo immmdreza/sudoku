@@ -1,5 +1,3 @@
-use sudoku_solver::SudokuBoard;
-
 // A board demo
 // +---+---+---+---+---+---+---+---+---+
 // |  ███████  |           |           |
@@ -122,13 +120,4 @@ pub fn print_board() {
     // +---+---+---+
     //
     // Now print the board using the above representations.
-}
-
-struct SudokuBoardConsolVisual<'s> {
-    board: &'s SudokuBoard,
-    canvas: [[char; 37]; 19],
-}
-
-impl<'s> SudokuBoardConsolVisual<'s> {
-    fn fill_canvas(&mut self) {}
 }

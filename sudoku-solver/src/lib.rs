@@ -318,7 +318,7 @@ impl SudokuBoard {
 pub fn get_numbers<'s>(iterator: impl Iterator<Item = &'s SudokuBlock>) -> SudokuNumbers {
     SudokuNumbers::new(iterator.filter_map(|f| match f.status {
         SudokuBlockStatus::Fixed(sudoku_number) | SudokuBlockStatus::Resolved(sudoku_number) => {
-            Some(sudoku_number.clone())
+            Some(sudoku_number)
         }
         _ => None,
     }))

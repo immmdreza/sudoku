@@ -2,11 +2,10 @@ use bevy::{
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, WHITE, YELLOW},
-        tailwind::{BLUE_200, BLUE_400, YELLOW_400},
+        tailwind::{BLUE_200, YELLOW_400},
     },
     input::common_conditions::input_just_pressed,
     prelude::*,
-    text::TextBounds,
 };
 use sudoku_solver::{
     SudokuBlockStatus, SudokuBoard,
@@ -134,7 +133,7 @@ fn setup(
                     };
 
                     builder.spawn((
-                        Text2d::new(format!("Use 'Space' to update possible values, 'Enter' to resolve blocks,\n'R' to reset, 'M' to change selection mode, 'C' to clear block,\n1 to 9 to set number and 'H' to engage Hidden single strategy.")),
+                        Text2d::new("Use 'Space' to update possible values, 'Enter' to resolve blocks,\n'R' to reset, 'M' to change selection mode, 'C' to clear block,\n1 to 9 to set number and 'H' to engage Hidden single strategy.".to_string()),
                         text_font,
                         TextColor(Color::from(BLACK)),
                         TextLayout::new(Justify::Center, LineBreak::WordBoundary),
@@ -274,32 +273,24 @@ fn change_selected_block(
     mut selected: ResMut<SelectedBlock>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::ArrowLeft) {
-        if selected.current.0 > 0 {
-            selected.prev = selected.current.into();
-            selected.current.0 -= 1;
-        }
+    if keyboard_input.just_pressed(KeyCode::ArrowLeft) && selected.current.0 > 0 {
+        selected.prev = selected.current.into();
+        selected.current.0 -= 1;
     }
 
-    if keyboard_input.just_pressed(KeyCode::ArrowRight) {
-        if selected.current.0 < 8 {
-            selected.prev = selected.current.into();
-            selected.current.0 += 1;
-        }
+    if keyboard_input.just_pressed(KeyCode::ArrowRight) && selected.current.0 < 8 {
+        selected.prev = selected.current.into();
+        selected.current.0 += 1;
     }
 
-    if keyboard_input.just_pressed(KeyCode::ArrowDown) {
-        if selected.current.1 < 8 {
-            selected.prev = selected.current.into();
-            selected.current.1 += 1;
-        }
+    if keyboard_input.just_pressed(KeyCode::ArrowDown) && selected.current.1 < 8 {
+        selected.prev = selected.current.into();
+        selected.current.1 += 1;
     }
 
-    if keyboard_input.just_pressed(KeyCode::ArrowUp) {
-        if selected.current.1 > 0 {
-            selected.prev = selected.current.into();
-            selected.current.1 -= 1;
-        }
+    if keyboard_input.just_pressed(KeyCode::ArrowUp) && selected.current.1 > 0 {
+        selected.prev = selected.current.into();
+        selected.current.1 -= 1;
     }
 }
 
@@ -318,13 +309,13 @@ fn update_selected_block(
         }));
     }
 
-    if let Some(prev) = selected.prev {
-        if let Some((_, mut material)) = blocks.iter_mut().find(|(index, _)| {
+    if let Some(prev) = selected.prev
+        && let Some((_, mut material)) = blocks.iter_mut().find(|(index, _)| {
             let index = index.actual_index();
             index.0 == prev.0 && index.1 == prev.1
-        }) {
-            material.0 = materials.add(Color::from(YELLOW));
-        }
+        })
+    {
+        material.0 = materials.add(Color::from(YELLOW));
     }
 
     selected.prev = None;
@@ -454,11 +445,11 @@ fn _update_block(
 ) {
     match selected.mode {
         SelectionMode::Resolving => {
-            if let SudokuBlockStatus::Resolved(already) = block.status {
-                if already == number {
-                    block.status = SudokuBlockStatus::Unresolved;
-                    return;
-                }
+            if let SudokuBlockStatus::Resolved(already) = block.status
+                && already == number
+            {
+                block.status = SudokuBlockStatus::Unresolved;
+                return;
             }
 
             block.status = SudokuBlockStatus::Resolved(number);
@@ -583,25 +574,22 @@ fn square_group_info(
     offset: f32,
     center_translation: Vec2,
 ) -> impl Iterator<Item = SquareSpawnInfo> {
-    (0..3)
-        .into_iter()
-        .map(move |i| {
-            (0..3).into_iter().map(move |j| {
-                let i_f32 = i as f32;
-                let j_f32 = j as f32;
+    (0..3).flat_map(move |i| {
+        (0..3).map(move |j| {
+            let i_f32 = i as f32;
+            let j_f32 = j as f32;
 
-                let center = center_translation;
-                let width = (width - 4. * offset) / 3.;
+            let center = center_translation;
+            let width = (width - 4. * offset) / 3.;
 
-                SquareSpawnInfo {
-                    translation: Vec2 {
-                        x: (i_f32 * (width + offset) - width) + center.x - offset,
-                        y: -((j_f32 * (width + offset) - width) + center.y - offset),
-                    },
-                    width,
-                    index: (i, j),
-                }
-            })
+            SquareSpawnInfo {
+                translation: Vec2 {
+                    x: (i_f32 * (width + offset) - width) + center.x - offset,
+                    y: -((j_f32 * (width + offset) - width) + center.y - offset),
+                },
+                width,
+                index: (i, j),
+            }
         })
-        .flatten()
+    })
 }

@@ -15,14 +15,14 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
             for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
                 let mut hidden_number = None;
 
-                if let Some(row_hidden) = get_hidden_single(&board, row, col, |b| b.get_row(row)) {
+                if let Some(row_hidden) = get_hidden_single(board, row, col, |b| b.get_row(row)) {
                     hidden_number = Some(row_hidden);
                 } else if let Some(col_hidden) =
-                    get_hidden_single(&board, row, col, |b| b.get_column(col))
+                    get_hidden_single(board, row, col, |b| b.get_column(col))
                 {
                     hidden_number = Some(col_hidden);
                 } else if let Some(square_hidden) =
-                    get_hidden_single(&board, row, col, |b| b.get_square(square_number(row, col)))
+                    get_hidden_single(board, row, col, |b| b.get_square(square_number(row, col)))
                 {
                     hidden_number = Some(square_hidden);
                 }
