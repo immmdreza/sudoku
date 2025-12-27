@@ -1,10 +1,12 @@
+use std::time::Duration;
+
 use bevy::{
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, WHITE, YELLOW},
         tailwind::{BLUE_200, YELLOW_400},
     },
-    input::common_conditions::input_just_pressed,
+    input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
 };
 use sudoku_solver::{
@@ -30,7 +32,22 @@ enum SelectionMode {
 struct SelectedBlock {
     mode: SelectionMode,
     current: (usize, usize),
-    prev: Option<(usize, usize)>,
+}
+
+#[derive(Debug, Resource, Default)]
+struct DefaultMaterials {
+    // Handles
+    default_foundation_block_color: Handle<ColorMaterial>,
+    default_possibilities_block_color: Handle<ColorMaterial>,
+    default_block_color: Handle<ColorMaterial>,
+    selected_resolving_block_color: Handle<ColorMaterial>,
+    selected_possibilities_block_color: Handle<ColorMaterial>,
+
+    // Colors
+    default_base_text_color: Color,
+    default_fixed_number_color: Color,
+    default_resolved_number_color: Color,
+    default_possibility_number_color: Color,
 }
 
 fn main() {
@@ -38,6 +55,11 @@ fn main() {
         .add_plugins(DefaultPlugins)
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SelectedBlock>()
+        .init_resource::<DefaultMaterials>()
+        .insert_resource(ChangeSelectionTimer(Timer::new(
+            Duration::from_millis(100),
+            TimerMode::Repeating,
+        )))
         .add_systems(Startup, setup)
         .add_systems(
             PostStartup,
@@ -47,10 +69,10 @@ fn main() {
             Update,
             (
                 change_selected_block.run_if(
-                    input_just_pressed(KeyCode::ArrowDown)
-                        .or(input_just_pressed(KeyCode::ArrowUp))
-                        .or(input_just_pressed(KeyCode::ArrowLeft))
-                        .or(input_just_pressed(KeyCode::ArrowRight)),
+                    input_pressed(KeyCode::ArrowDown)
+                        .or(input_pressed(KeyCode::ArrowUp))
+                        .or(input_pressed(KeyCode::ArrowLeft))
+                        .or(input_pressed(KeyCode::ArrowRight)),
                 ),
                 engage_strategy.run_if(input_just_pressed(KeyCode::KeyH)),
                 update_possibilities.run_if(input_just_pressed(KeyCode::Space)),
@@ -87,6 +109,7 @@ fn setup(
     mut sudoku_board: ResMut<SudokuBoardResources>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
+    mut defaults: ResMut<DefaultMaterials>,
     asset_server: Res<AssetServer>,
 ) {
     commands.spawn(Camera2d);
@@ -99,20 +122,23 @@ fn setup(
 
     board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
 
-    spawn_sudoku_board(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        center,
-        width,
-        offset,
-        Color::from(PURPLE),
-    );
+    defaults.default_block_color = materials.add(Color::from(YELLOW));
+    defaults.selected_resolving_block_color = materials.add(Color::from(YELLOW_400));
+    defaults.selected_possibilities_block_color = materials.add(Color::from(BLUE_200));
+    defaults.default_foundation_block_color = materials.add(Color::from(PURPLE));
+    defaults.default_possibilities_block_color = materials.add(Color::from(BLUE));
+
+    defaults.default_base_text_color = Color::from(BLACK);
+    defaults.default_fixed_number_color = Color::from(BLACK);
+    defaults.default_possibility_number_color = Color::from(WHITE);
+    defaults.default_resolved_number_color = Color::from(BLUE);
+
+    spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
 
     commands
         .spawn((
             Mesh2d(meshes.add(Rectangle::new(620., 100.))),
-            MeshMaterial2d(materials.add(Color::from(PURPLE))),
+            MeshMaterial2d(defaults.default_foundation_block_color.clone()),
             Transform::default().with_translation(Vec3 {
                 y: -320.,
                 ..Default::default()
@@ -122,7 +148,7 @@ fn setup(
             builder
                 .spawn((
                     Mesh2d(meshes.add(Rectangle::new(610., 90.))),
-                    MeshMaterial2d(materials.add(Color::from(YELLOW))),
+                    MeshMaterial2d(defaults.default_block_color.clone()),
                 ))
                 .with_children(|builder| {
                     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
@@ -135,7 +161,7 @@ fn setup(
                     builder.spawn((
                         Text2d::new("Use 'Space' to update possible values, 'Enter' to resolve blocks,\n'R' to reset, 'M' to change selection mode, 'C' to clear block,\n1 to 9 to set number and 'H' to engage Hidden single strategy.".to_string()),
                         text_font,
-                        TextColor(Color::from(BLACK)),
+                        TextColor(defaults.default_base_text_color),
                         TextLayout::new(Justify::Center, LineBreak::WordBoundary),
                         // Wrap text in the rectangle
                         // TextBounds::from(Vec2::new(300., 500.)),
@@ -162,7 +188,7 @@ fn update_board(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<ColorMaterial>>,
+    defaults: Res<DefaultMaterials>,
     mut board: ResMut<SudokuBoardResources>,
     blocks: Query<(Entity, &SquareSpawnInfo, &SquareIndex), With<BlockSquare>>,
 ) {
@@ -202,7 +228,13 @@ fn update_board(
                                 .spawn((
                                     Text2d::new(format!("{}", sudoku_number.to_u8())),
                                     text_font.clone(),
-                                    TextColor(Color::from(BLACK)),
+                                    TextColor(
+                                        if matches!(&block.status, SudokuBlockStatus::Fixed(_)) {
+                                            defaults.default_fixed_number_color
+                                        } else {
+                                            defaults.default_resolved_number_color
+                                        },
+                                    ),
                                     TextLayout::new_with_justify(text_justification),
                                 ))
                                 .id();
@@ -234,9 +266,10 @@ fn update_board(
                                         builder
                                             .spawn((
                                                 SquareBundle::new(
-                                                    Color::from(BLUE),
+                                                    defaults
+                                                        .default_possibilities_block_color
+                                                        .clone(),
                                                     &mut meshes,
-                                                    &mut materials,
                                                     spawn_info,
                                                     Some(master_index),
                                                 ),
@@ -246,7 +279,9 @@ fn update_board(
                                                 builder.spawn((
                                                     Text2d::new(format!("{}", number)),
                                                     text_font.clone(),
-                                                    TextColor(Color::from(WHITE)),
+                                                    TextColor(
+                                                        defaults.default_possibility_number_color,
+                                                    ),
                                                     TextLayout::new_with_justify(
                                                         text_justification,
                                                     ),
@@ -269,56 +304,77 @@ fn update_board(
     }
 }
 
+#[derive(Resource)]
+struct ChangeSelectionTimer(Timer);
+
 fn change_selected_block(
+    time: Res<Time>,
+    mut timer: ResMut<ChangeSelectionTimer>,
     mut selected: ResMut<SelectedBlock>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
-    if keyboard_input.just_pressed(KeyCode::ArrowLeft) && selected.current.0 > 0 {
-        selected.prev = selected.current.into();
-        selected.current.0 -= 1;
-    }
+    if timer.0.tick(time.delta()).just_finished() {
+        if keyboard_input.pressed(KeyCode::ArrowLeft) {
+            if selected.current.0 > 0 {
+                selected.current.0 -= 1;
+            } else {
+                selected.current.0 = 8;
+            }
+        }
 
-    if keyboard_input.just_pressed(KeyCode::ArrowRight) && selected.current.0 < 8 {
-        selected.prev = selected.current.into();
-        selected.current.0 += 1;
-    }
+        if keyboard_input.pressed(KeyCode::ArrowRight) {
+            if selected.current.0 < 8 {
+                selected.current.0 += 1;
+            } else {
+                selected.current.0 = 0;
+            }
+        }
 
-    if keyboard_input.just_pressed(KeyCode::ArrowDown) && selected.current.1 < 8 {
-        selected.prev = selected.current.into();
-        selected.current.1 += 1;
-    }
+        if keyboard_input.pressed(KeyCode::ArrowDown) {
+            if selected.current.1 < 8 {
+                selected.current.1 += 1;
+            } else {
+                selected.current.1 = 0;
+            }
+        }
 
-    if keyboard_input.just_pressed(KeyCode::ArrowUp) && selected.current.1 > 0 {
-        selected.prev = selected.current.into();
-        selected.current.1 -= 1;
+        if keyboard_input.pressed(KeyCode::ArrowUp) {
+            if selected.current.1 > 0 {
+                selected.current.1 -= 1;
+            } else {
+                selected.current.1 = 8;
+            }
+        }
     }
 }
 
 fn update_selected_block(
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut selected: ResMut<SelectedBlock>,
+    defaults: Res<DefaultMaterials>,
+    selected: Res<SelectedBlock>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<BlockSquare>>,
 ) {
     if let Some((_, mut material)) = blocks.iter_mut().find(|(index, _)| {
         let index = index.actual_index();
         index.0 == selected.current.0 && index.1 == selected.current.1
     }) {
-        material.0 = materials.add(Color::from(match selected.mode {
-            SelectionMode::Resolving => YELLOW_400,
-            SelectionMode::Possibilities => BLUE_200,
-        }));
+        material.0 = match selected.mode {
+            SelectionMode::Resolving => defaults.selected_resolving_block_color.clone(),
+            SelectionMode::Possibilities => defaults.selected_possibilities_block_color.clone(),
+        };
     }
 
-    if let Some(prev) = selected.prev
-        && let Some((_, mut material)) = blocks.iter_mut().find(|(index, _)| {
-            let index = index.actual_index();
-            index.0 == prev.0 && index.1 == prev.1
-        })
-    {
-        material.0 = materials.add(Color::from(YELLOW));
-    }
+    for (index, mut material) in blocks.iter_mut() {
+        let index = index.actual_index();
+        if index.0 == selected.current.0 && index.1 == selected.current.1 {
+            continue;
+        }
 
-    selected.prev = None;
+        if material.0.id() == defaults.selected_possibilities_block_color.id()
+            || material.0.id() == defaults.selected_resolving_block_color.id()
+        {
+            material.0 = defaults.default_block_color.clone();
+        }
+    }
 }
 
 fn update_possibilities(
@@ -497,16 +553,20 @@ struct PossibilitiesSquare;
 fn spawn_sudoku_board(
     commands: &mut Commands<'_, '_>,
     meshes: &mut ResMut<'_, Assets<Mesh>>,
-    materials: &mut ResMut<'_, Assets<ColorMaterial>>,
+    defaults: &DefaultMaterials,
     center: Vec2,
     width: f32,
     offset: f32,
-    color: Color,
 ) {
     for spawn_info in square_group_info(width, offset, center) {
         commands
             .spawn((
-                SquareBundle::new(color, meshes, materials, spawn_info.clone(), None),
+                SquareBundle::new(
+                    defaults.default_foundation_block_color.clone(),
+                    meshes,
+                    spawn_info.clone(),
+                    None,
+                ),
                 FoundationSquare,
             ))
             .with_children(|builder| {
@@ -515,9 +575,8 @@ fn spawn_sudoku_board(
 
                 for spawn_info in square_group_info(width, 5., Default::default()) {
                     let bundle = SquareBundle::new(
-                        Color::from(YELLOW),
+                        defaults.default_block_color.clone(),
                         meshes,
-                        materials,
                         spawn_info.clone(),
                         Some(master_index),
                     );
@@ -538,15 +597,14 @@ struct SquareBundle {
 
 impl SquareBundle {
     fn new(
-        color: Color,
+        color: Handle<ColorMaterial>,
         meshes: &mut ResMut<'_, Assets<Mesh>>,
-        materials: &mut ResMut<'_, Assets<ColorMaterial>>,
         spawn_info: SquareSpawnInfo,
         master_index: Option<(usize, usize)>,
     ) -> Self {
         Self {
             mesh: Mesh2d(meshes.add(Rectangle::new(spawn_info.width, spawn_info.width))),
-            material: MeshMaterial2d(materials.add(color)),
+            material: MeshMaterial2d(color),
             transform: Transform::default().with_translation(Vec3 {
                 x: spawn_info.translation.x,
                 y: spawn_info.translation.y,
