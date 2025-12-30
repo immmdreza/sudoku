@@ -1,5 +1,5 @@
 use crate::{
-    SudokuBlock, SudokuBoard,
+    BlockIndex, SudokuBlock, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
     square_number,
     strategies::SudokuSolvingStrategy,
@@ -18,7 +18,7 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
                 if let Some(row_hidden) = get_hidden_single(board, row, col, |b| b.get_row(row)) {
                     hidden_number = Some(row_hidden);
                 } else if let Some(col_hidden) =
-                    get_hidden_single(board, row, col, |b| b.get_column(col))
+                    get_hidden_single(board, row, col, |b| b.get_col(col))
                 {
                     hidden_number = Some(col_hidden);
                 } else if let Some(square_hidden) =
@@ -28,35 +28,37 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
                 }
 
                 if let Some(hidden) = hidden_number {
-                    if let Some(possibilities) =
-                        board.get_block_mut(row, col).status.as_possibilities_mut()
+                    if let Some(possibilities) = board
+                        .get_block_mut(&BlockIndex::new(row, col))
+                        .status
+                        .as_possibilities_mut()
                     {
                         *possibilities = Default::default();
-                        possibilities.set_number(hidden);
+                        possibilities.numbers.set_number(hidden);
                     }
 
                     for possibilities in board
                         .get_row_mut(row)
-                        .filter(|b| b.col != col)
+                        .filter(|b| b.col() != col)
                         .filter_map(|f| f.status.as_possibilities_mut())
                     {
-                        possibilities.del_number(hidden);
+                        possibilities.numbers.del_number(hidden);
                     }
 
                     for possibilities in board
-                        .get_column_mut(col)
-                        .filter(|b| b.row != row)
+                        .get_col_mut(col)
+                        .filter(|b| b.row() != row)
                         .filter_map(|f| f.status.as_possibilities_mut())
                     {
-                        possibilities.del_number(hidden);
+                        possibilities.numbers.del_number(hidden);
                     }
 
                     for possibilities in board
                         .get_square_mut(square_number(row, col))
-                        .filter(|b| b.col != col && b.row != row)
+                        .filter(|b| b.col() != col && b.row() != row)
                         .filter_map(|f| f.status.as_possibilities_mut())
                     {
-                        possibilities.del_number(hidden);
+                        possibilities.numbers.del_number(hidden);
                     }
                 }
             }
@@ -74,14 +76,14 @@ where
     F: FnOnce(&'s SudokuBoard) -> S,
     S: Iterator<Item = &'s SudokuBlock>,
 {
-    let block = board.get_block(row, col);
+    let block = board.get_block(&BlockIndex::new(row, col));
     let possibles = block.status.as_possibilities()?;
     // All in this row except this one.
-    let row_pos = get_all_possible_numbers(
-        container(board).filter(|x| !(x.col == block.col && x.row == block.row)),
-    );
+    let row_pos =
+        get_all_possible_numbers(container(board).filter(|x| !(x.index() == block.index())));
 
     let hidden = possibles
+        .numbers
         .get_numbers()
         .filter(|f| !row_pos.has_number(*f))
         .collect::<Vec<_>>();
@@ -98,7 +100,7 @@ pub fn get_all_possible_numbers<'s>(
     iterator.filter_map(|f| f.status.as_possibilities()).fold(
         SudokuNumbers::default(),
         |mut acc, fold| {
-            for f in fold.get_numbers() {
+            for f in fold.numbers.get_numbers() {
                 acc.set_number(f);
             }
             acc
@@ -120,7 +122,7 @@ mod tests {
         board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
         board.update_possibilities();
 
-        let pos = get_hidden_single(&board, Three, One, |f| f.get_column(One));
+        let pos = get_hidden_single(&board, Three, One, |f| f.get_col(One));
         println!("{:?}", pos)
     }
 }

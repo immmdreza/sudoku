@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::{
     numbers::{SudokuNumber, SudokuNumbers},
     strategies::SudokuSolvingStrategy,
@@ -6,16 +8,50 @@ use crate::{
 pub mod numbers;
 pub mod strategies;
 
-#[derive(Clone, Debug)]
-pub struct SudokuBlock {
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct BlockIndex {
     row: SudokuNumber,
     col: SudokuNumber,
+}
+
+impl BlockIndex {
+    pub fn new(row: SudokuNumber, col: SudokuNumber) -> Self {
+        Self { row, col }
+    }
+
+    pub fn from_index(row: usize, col: usize) -> Result<Self, ()> {
+        Ok(Self::new((row + 1).try_into()?, (col + 1).try_into()?))
+    }
+
+    pub fn actual_index(&self) -> (usize, usize) {
+        (self.row.to_index(), self.col.to_index())
+    }
+
+    pub fn square_number(&self) -> SudokuNumber {
+        square_number(self.row, self.col)
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Conflicting {
+    AffectedBy(BlockIndex),
+    Source,
+}
+
+#[derive(Clone, Debug)]
+pub struct SudokuBlock {
+    index: BlockIndex,
+    pub conflicting: Option<Conflicting>,
     pub status: SudokuBlockStatus,
 }
 
 impl SudokuBlock {
     pub fn new(row: SudokuNumber, col: SudokuNumber, status: SudokuBlockStatus) -> Self {
-        Self { status, row, col }
+        Self {
+            status,
+            index: BlockIndex::new(row, col),
+            conflicting: None,
+        }
     }
 
     pub fn is_fixed(&self) -> bool {
@@ -35,15 +71,38 @@ impl SudokuBlock {
     }
 
     pub fn row(&self) -> SudokuNumber {
-        self.row
+        self.index.row
     }
 
     pub fn col(&self) -> SudokuNumber {
-        self.col
+        self.index.col
     }
 
     pub fn square_number(&self) -> SudokuNumber {
-        square_number(self.row, self.col)
+        self.index.square_number()
+    }
+
+    pub fn index(&self) -> &BlockIndex {
+        &self.index
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Possibilities {
+    pub numbers: SudokuNumbers,
+    conflicting_numbers: SudokuNumbers,
+}
+
+impl Possibilities {
+    pub fn new(numbers: SudokuNumbers) -> Self {
+        Self {
+            numbers,
+            conflicting_numbers: Default::default(),
+        }
+    }
+
+    pub fn is_conflicting(&self, number: SudokuNumber) -> bool {
+        self.numbers.has_number(number) && self.conflicting_numbers.has_number(number)
     }
 }
 
@@ -53,7 +112,7 @@ pub enum SudokuBlockStatus {
     Unresolved,
     Fixed(SudokuNumber),
     Resolved(SudokuNumber),
-    Possibilities(SudokuNumbers),
+    Possibilities(Possibilities),
 }
 
 impl SudokuBlockStatus {
@@ -89,7 +148,7 @@ impl SudokuBlockStatus {
         matches!(self, Self::Possibilities(..))
     }
 
-    pub fn as_possibilities(&self) -> Option<&SudokuNumbers> {
+    pub fn as_possibilities(&self) -> Option<&Possibilities> {
         if let Self::Possibilities(v) = self {
             Some(v)
         } else {
@@ -97,7 +156,7 @@ impl SudokuBlockStatus {
         }
     }
 
-    pub fn as_possibilities_mut(&mut self) -> Option<&mut SudokuNumbers> {
+    pub fn as_possibilities_mut(&mut self) -> Option<&mut Possibilities> {
         if let Self::Possibilities(v) = self {
             Some(v)
         } else {
@@ -191,12 +250,14 @@ impl SudokuBoard {
         board
     }
 
-    pub fn get_block(&self, row: SudokuNumber, col: SudokuNumber) -> &SudokuBlock {
-        &self.blocks[row.to_index()][col.to_index()]
+    pub fn get_block(&self, index: &BlockIndex) -> &SudokuBlock {
+        let (row, col) = index.actual_index();
+        &self.blocks[row][col]
     }
 
-    pub fn get_block_mut(&mut self, row: SudokuNumber, col: SudokuNumber) -> &mut SudokuBlock {
-        &mut self.blocks[row.to_index()][col.to_index()]
+    pub fn get_block_mut(&mut self, index: &BlockIndex) -> &mut SudokuBlock {
+        let (row, col) = index.actual_index();
+        &mut self.blocks[row][col]
     }
 
     pub fn get_blocks(&self) -> impl Iterator<Item = &SudokuBlock> {
@@ -218,13 +279,13 @@ impl SudokuBoard {
         self.blocks[row_number.to_index()].iter_mut()
     }
 
-    pub fn get_column(&self, column_number: SudokuNumber) -> impl Iterator<Item = &SudokuBlock> {
+    pub fn get_col(&self, column_number: SudokuNumber) -> impl Iterator<Item = &SudokuBlock> {
         self.blocks
             .iter()
             .map(move |row| &row[column_number.to_index()])
     }
 
-    pub fn get_column_mut(
+    pub fn get_col_mut(
         &mut self,
         column_number: SudokuNumber,
     ) -> impl Iterator<Item = &mut SudokuBlock> {
@@ -252,22 +313,18 @@ impl SudokuBoard {
             .flat_map(move |row| &mut row[start_col..start_col + 3])
     }
 
-    pub fn get_block_possible_numbers(
-        &self,
-        row: SudokuNumber,
-        col: SudokuNumber,
-    ) -> SudokuNumbers {
+    pub fn get_block_possible_numbers(&self, index: &BlockIndex) -> SudokuNumbers {
         let mut possible_numbers = SudokuNumbers::new_all();
 
-        for row_n in get_numbers(self.get_row(row)).get_numbers() {
+        for row_n in get_numbers(self.get_row(index.row)).get_numbers() {
             possible_numbers.del_number(row_n);
         }
 
-        for col_n in get_numbers(self.get_column(col)).get_numbers() {
+        for col_n in get_numbers(self.get_col(index.col)).get_numbers() {
             possible_numbers.del_number(col_n);
         }
 
-        for square_n in get_numbers(self.get_square(square_number(row, col))).get_numbers() {
+        for square_n in get_numbers(self.get_square(index.square_number())).get_numbers() {
             possible_numbers.del_number(square_n);
         }
 
@@ -278,12 +335,13 @@ impl SudokuBoard {
         use SudokuNumber::*;
         for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
             for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
+                let index = BlockIndex::new(row, col);
                 if let SudokuBlockStatus::Unresolved | SudokuBlockStatus::Possibilities(_) =
-                    self.get_block_mut(row, col).status
+                    self.get_block(&index).status
                 {
-                    let possibles = self.get_block_possible_numbers(row, col);
-                    let block = self.get_block_mut(row, col);
-                    block.status = SudokuBlockStatus::Possibilities(possibles);
+                    let possibles = self.get_block_possible_numbers(&index);
+                    let block = self.get_block_mut(&index);
+                    block.status = SudokuBlockStatus::Possibilities(Possibilities::new(possibles));
                 }
             }
         }
@@ -299,8 +357,8 @@ impl SudokuBoard {
     pub fn resolve_satisfied_blocks(&mut self) {
         for block in self.get_blocks_mut().filter(|f| f.is_possibilities()) {
             let possibles = block.status.as_possibilities().unwrap();
-            if possibles.count_numbers() == 1 {
-                let single_naked = possibles.get_numbers().next().unwrap();
+            if possibles.numbers.count_numbers() == 1 {
+                let single_naked = possibles.numbers.get_numbers().next().unwrap();
                 block.status = SudokuBlockStatus::Resolved(single_naked);
             }
         }
@@ -309,10 +367,143 @@ impl SudokuBoard {
     }
 
     pub fn reset(&mut self) {
-        for block in self.get_blocks_mut().filter(|f| !f.is_fixed()) {
-            block.status = SudokuBlockStatus::Unresolved;
+        for block in self.get_blocks_mut() {
+            if !block.is_fixed() {
+                block.status = SudokuBlockStatus::Unresolved;
+            }
+
+            block.conflicting = None;
         }
     }
+
+    pub fn find_block_mistakes(&self, index: &BlockIndex) -> Option<Vec<BlockIndex>> {
+        let block = self.get_block(index);
+        if let SudokuBlockStatus::Resolved(resolved) = block.status {
+            let mut mistakes = vec![];
+
+            let mut row_mistakes = find_mistake_in_container(self.get_row(index.row));
+            let mut col_mistakes = find_mistake_in_container(self.get_col(index.col));
+            let mut square_mistakes =
+                find_mistake_in_container(self.get_square(index.square_number()));
+
+            if let Some(row_m) = row_mistakes.get_mut(&resolved) {
+                mistakes.append(row_m);
+            }
+            if let Some(col_m) = col_mistakes.get_mut(&resolved) {
+                mistakes.append(col_m);
+            }
+            if let Some(square_m) = square_mistakes.get_mut(&resolved) {
+                mistakes.append(square_m);
+            }
+
+            if mistakes.is_empty() {
+                return None;
+            } else {
+                mistakes.dedup();
+                return Some(mistakes);
+            }
+        }
+        None
+    }
+
+    pub fn mark_conflicts(&mut self) {
+        let mut conflicts = HashMap::new();
+        for block in self.get_blocks().filter(|x| x.is_resolved()) {
+            if let Some(mistakes) = self.find_block_mistakes(block.index()) {
+                conflicts.insert(block.index.clone(), mistakes);
+            }
+        }
+
+        self.get_blocks_mut().for_each(|f| f.conflicting = None);
+
+        for (source_index, affected_indexes) in conflicts.iter() {
+            self.get_block_mut(source_index).conflicting = Some(Conflicting::Source);
+            for affected in affected_indexes {
+                if affected == source_index {
+                    continue;
+                }
+
+                self.get_block_mut(affected).conflicting =
+                    Some(Conflicting::AffectedBy(source_index.clone()));
+            }
+        }
+    }
+
+    pub fn mark_possibilities_conflicts(&mut self) {
+        let mut conflicts = HashMap::new();
+        for block in self.get_blocks().filter(|x| x.is_possibilities()) {
+            let mut numbers = HashMap::new();
+            let poss = &block.status.as_possibilities().unwrap().numbers;
+            for pos in poss.get_numbers() {
+                let mut row_similar = find_similar_in_container(pos, self.get_row(block.row()));
+                let mut col_similar = find_similar_in_container(pos, self.get_col(block.col()));
+                let mut square_similar =
+                    find_similar_in_container(pos, self.get_square(block.square_number()));
+
+                row_similar.append(&mut col_similar);
+                row_similar.append(&mut square_similar);
+                row_similar.dedup();
+
+                if !row_similar.is_empty() {
+                    numbers.insert(pos, row_similar);
+                }
+            }
+
+            if !numbers.is_empty() {
+                conflicts.insert(block.index.clone(), numbers);
+            }
+        }
+
+        for conflict in conflicts {
+            let block = self.get_block_mut(&conflict.0);
+            if let SudokuBlockStatus::Possibilities(poss) = &mut block.status {
+                for number in conflict.1 {
+                    poss.conflicting_numbers.set_number(number.0);
+                    //TODO - Find a way to mark conflicting blocks as well
+                }
+            }
+        }
+    }
+}
+
+pub fn find_mistake_in_container<'s>(
+    iterator: impl Iterator<Item = &'s SudokuBlock>,
+) -> HashMap<SudokuNumber, Vec<BlockIndex>> {
+    let mut counts = HashMap::new();
+
+    for x in iterator {
+        let number = match x.status {
+            SudokuBlockStatus::Fixed(sudoku_number)
+            | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number,
+            _ => continue,
+        };
+
+        let indexes = counts.entry(number).or_insert(vec![]);
+        indexes.push(x.index.clone());
+    }
+
+    counts
+}
+
+pub fn find_similar_in_container<'s>(
+    number: SudokuNumber,
+    iterator: impl Iterator<Item = &'s SudokuBlock>,
+) -> Vec<BlockIndex> {
+    let mut counts = Vec::new();
+
+    for x in iterator {
+        let found_number = match x.status {
+            SudokuBlockStatus::Fixed(sudoku_number)
+            | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number,
+            _ => continue,
+        };
+
+        if number == found_number {
+            counts.push(x.index.clone());
+        }
+    }
+
+    counts
 }
 
 pub fn get_numbers<'s>(iterator: impl Iterator<Item = &'s SudokuBlock>) -> SudokuNumbers {
@@ -345,7 +536,24 @@ mod tests {
         let mut board = SudokuBoard::default();
         board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
 
-        let numbers = board.get_block_possible_numbers(One, One);
+        let numbers = board.get_block_possible_numbers(&BlockIndex::new(One, One));
         println!("{:?}", numbers.get_numbers().collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_conflicts() {
+        use SudokuNumber::*;
+
+        let mut board = SudokuBoard::default();
+        board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
+
+        board.get_block_mut(&BlockIndex::new(One, One)).status = SudokuBlockStatus::Resolved(Seven);
+        board.mark_conflicts();
+
+        let conflicting = board
+            .get_blocks()
+            .filter(|f| f.conflicting.is_some())
+            .collect::<Vec<_>>();
+        println!("{:?}", conflicting);
     }
 }

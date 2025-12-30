@@ -3,14 +3,14 @@ use std::time::Duration;
 use bevy::{
     color::palettes::{
         basic::PURPLE,
-        css::{BLACK, BLUE, WHITE, YELLOW},
-        tailwind::{BLUE_200, YELLOW_400},
+        css::{BLACK, BLUE, RED, WHITE, YELLOW},
+        tailwind::{BLUE_200, RED_400, YELLOW_400},
     },
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
 };
 use sudoku_solver::{
-    SudokuBlockStatus, SudokuBoard,
+    BlockIndex, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
     strategies::hidden_single::HiddenSingleStrategy,
 };
@@ -43,6 +43,9 @@ struct DefaultMaterials {
     selected_resolving_block_color: Handle<ColorMaterial>,
     selected_possibilities_block_color: Handle<ColorMaterial>,
 
+    conflicting_source_color: Handle<ColorMaterial>,
+    conflicting_affected_color: Handle<ColorMaterial>,
+
     // Colors
     default_base_text_color: Color,
     default_fixed_number_color: Color,
@@ -57,7 +60,7 @@ fn main() {
         .init_resource::<SelectedBlock>()
         .init_resource::<DefaultMaterials>()
         .insert_resource(ChangeSelectionTimer(Timer::new(
-            Duration::from_millis(100),
+            Duration::from_millis(120),
             TimerMode::Repeating,
         )))
         .add_systems(Startup, setup)
@@ -128,6 +131,9 @@ fn setup(
     defaults.default_foundation_block_color = materials.add(Color::from(PURPLE));
     defaults.default_possibilities_block_color = materials.add(Color::from(BLUE));
 
+    defaults.conflicting_source_color = materials.add(Color::from(RED));
+    defaults.conflicting_affected_color = materials.add(Color::from(RED_400));
+
     defaults.default_base_text_color = Color::from(BLACK);
     defaults.default_fixed_number_color = Color::from(BLACK);
     defaults.default_possibility_number_color = Color::from(WHITE);
@@ -170,14 +176,14 @@ fn setup(
         });
 }
 
-fn check_foundation_squares(query: Query<(Entity, &SquareSpawnInfo), With<FoundationSquare>>) {
+fn check_foundation_squares(query: Query<(Entity, &SquareSpawnInfo), With<Foundation>>) {
     println!("Foundation squares:");
     for (i, (_, index)) in query.iter().enumerate() {
         println!("{}- {:?}", i + 1, index.index)
     }
 }
 
-fn check_block_squares(query: Query<(Entity, &SquareIndex), With<BlockSquare>>) {
+fn check_block_squares(query: Query<(Entity, &SquareIndex), With<Block>>) {
     println!("Block squares:");
     for (i, (_, index)) in query.iter().enumerate() {
         println!("{}- {:?} (index: {:?})", i + 1, index, index.actual_index())
@@ -190,7 +196,16 @@ fn update_board(
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<DefaultMaterials>,
     mut board: ResMut<SudokuBoardResources>,
-    blocks: Query<(Entity, &SquareSpawnInfo, &SquareIndex), With<BlockSquare>>,
+    mut blocks: Query<
+        (
+            Entity,
+            &SquareSpawnInfo,
+            &SquareIndex,
+            &mut MeshMaterial2d<ColorMaterial>,
+        ),
+        With<Block>,
+    >,
+    selected: Res<SelectedBlock>,
 ) {
     let mut snapshot_should_update = false;
 
@@ -205,18 +220,19 @@ fn update_board(
     use SudokuNumber::*;
     for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
         for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
-            if board.current.get_block(row, col).status != board.snapshot.get_block(row, col).status
-            {
-                snapshot_should_update = true;
-                let i = col.to_index();
-                let j = row.to_index();
+            let block_index = BlockIndex::new(row, col);
+            let block = board.current.get_block(&block_index);
+            let snapshot_block = board.snapshot.get_block(&block_index);
+            let (j, i) = block_index.actual_index();
 
-                if let Some((entity, spawn_info, _)) = blocks.iter().find(|(_, _, index)| {
+            if block.status != snapshot_block.status {
+                snapshot_should_update = true;
+
+                if let Some((entity, spawn_info, _, _)) = blocks.iter().find(|(_, _, index, _)| {
                     let index = index.actual_index();
                     index.0 == i && index.1 == j
                 }) {
                     commands.entity(entity).despawn_children();
-                    let block = board.current.get_block(row, col);
 
                     match &block.status {
                         SudokuBlockStatus::Unresolved => (),
@@ -226,6 +242,7 @@ fn update_board(
 
                             let child = commands
                                 .spawn((
+                                    Block,
                                     Text2d::new(format!("{}", sudoku_number.to_u8())),
                                     text_font.clone(),
                                     TextColor(
@@ -246,6 +263,7 @@ fn update_board(
                                 let width = spawn_info.width;
 
                                 let numbers = sudoku_numbers
+                                    .numbers
                                     .get_numbers()
                                     .map(|f| f.to_index())
                                     .map(|f| {
@@ -266,14 +284,20 @@ fn update_board(
                                         builder
                                             .spawn((
                                                 SquareBundle::new(
-                                                    defaults
-                                                        .default_possibilities_block_color
-                                                        .clone(),
+                                                    if sudoku_numbers.is_conflicting(
+                                                        (*number).try_into().unwrap(),
+                                                    ) {
+                                                        defaults.conflicting_source_color.clone()
+                                                    } else {
+                                                        defaults
+                                                            .default_possibilities_block_color
+                                                            .clone()
+                                                    },
                                                     &mut meshes,
                                                     spawn_info,
                                                     Some(master_index),
                                                 ),
-                                                PossibilitiesSquare,
+                                                Possibilities,
                                             ))
                                             .with_children(|builder| {
                                                 builder.spawn((
@@ -285,6 +309,7 @@ fn update_board(
                                                     TextLayout::new_with_justify(
                                                         text_justification,
                                                     ),
+                                                    Possibilities,
                                                 ));
                                             });
                                     }
@@ -295,6 +320,27 @@ fn update_board(
                 }
 
                 println!("Updated ({:?}, {:?})", row, col);
+            }
+
+            if block.conflicting != snapshot_block.conflicting && selected.current != (i, j) {
+                if let Some((_, _, _, mut material)) = blocks.iter_mut().find(|(_, _, index, _)| {
+                    let index = index.actual_index();
+                    index.0 == i && index.1 == j
+                }) {
+                    match &block.conflicting {
+                        Some(conflicting) => match conflicting {
+                            sudoku_solver::Conflicting::AffectedBy(_) => {
+                                material.0 = defaults.conflicting_affected_color.clone();
+                            }
+                            sudoku_solver::Conflicting::Source => {
+                                material.0 = defaults.conflicting_source_color.clone();
+                            }
+                        },
+                        None => {
+                            material.0 = defaults.default_block_color.clone();
+                        }
+                    }
+                }
             }
         }
     }
@@ -351,7 +397,8 @@ fn change_selected_block(
 fn update_selected_block(
     defaults: Res<DefaultMaterials>,
     selected: Res<SelectedBlock>,
-    mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<BlockSquare>>,
+    board: Res<SudokuBoardResources>,
+    mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
     if let Some((_, mut material)) = blocks.iter_mut().find(|(index, _)| {
         let index = index.actual_index();
@@ -372,7 +419,23 @@ fn update_selected_block(
         if material.0.id() == defaults.selected_possibilities_block_color.id()
             || material.0.id() == defaults.selected_resolving_block_color.id()
         {
-            material.0 = defaults.default_block_color.clone();
+            let block = board
+                .current
+                .get_block(&BlockIndex::from_index(index.1, index.0).unwrap());
+
+            match &block.conflicting {
+                Some(conflicting) => match conflicting {
+                    sudoku_solver::Conflicting::AffectedBy(_) => {
+                        material.0 = defaults.conflicting_affected_color.clone();
+                    }
+                    sudoku_solver::Conflicting::Source => {
+                        material.0 = defaults.conflicting_source_color.clone();
+                    }
+                },
+                None => {
+                    material.0 = defaults.default_block_color.clone();
+                }
+            }
         }
     }
 }
@@ -435,10 +498,9 @@ fn manually_clear_block(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     selected: Res<SelectedBlock>,
 ) {
-    let block = sudoku_board.current.get_block_mut(
-        (selected.current.1 + 1).try_into().unwrap(),
-        (selected.current.0 + 1).try_into().unwrap(),
-    );
+    let block = sudoku_board
+        .current
+        .get_block_mut(&BlockIndex::from_index(selected.current.1, selected.current.0).unwrap());
 
     match &block.status {
         SudokuBlockStatus::Fixed(_) => (),
@@ -455,10 +517,9 @@ fn manually_update_block(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     selected: Res<SelectedBlock>,
 ) {
-    let block = sudoku_board.current.get_block_mut(
-        (selected.current.1 + 1).try_into().unwrap(),
-        (selected.current.0 + 1).try_into().unwrap(),
-    );
+    let block = sudoku_board
+        .current
+        .get_block_mut(&BlockIndex::from_index(selected.current.1, selected.current.0).unwrap());
 
     match &block.status {
         SudokuBlockStatus::Fixed(_) => (),
@@ -492,36 +553,45 @@ fn manually_update_block(
             }
         }
     }
+
+    sudoku_board.current.mark_conflicts();
+    sudoku_board.current.mark_possibilities_conflicts();
 }
 
 fn _update_block(
     selected: &SelectedBlock,
     block: &mut sudoku_solver::SudokuBlock,
     number: SudokuNumber,
-) {
+) -> bool {
+    let mut need_checking_conflicts = false;
     match selected.mode {
         SelectionMode::Resolving => {
             if let SudokuBlockStatus::Resolved(already) = block.status
                 && already == number
             {
                 block.status = SudokuBlockStatus::Unresolved;
-                return;
+                return true;
             }
 
             block.status = SudokuBlockStatus::Resolved(number);
+            need_checking_conflicts = true;
         }
         SelectionMode::Possibilities => {
             if let Some(pos) = block.status.as_possibilities_mut() {
-                if pos.has_number(number) {
-                    pos.del_number(number);
+                if pos.numbers.has_number(number) {
+                    pos.numbers.del_number(number);
                 } else {
-                    pos.set_number(number);
+                    pos.numbers.set_number(number);
                 }
             } else {
-                block.status = SudokuBlockStatus::Possibilities(SudokuNumbers::new([number]));
+                block.status = SudokuBlockStatus::Possibilities(SudokuPossibilities::new(
+                    SudokuNumbers::new([number]),
+                ));
             }
         }
     }
+
+    need_checking_conflicts
 }
 
 #[derive(Debug, Component)]
@@ -542,13 +612,13 @@ impl SquareIndex {
 }
 
 #[derive(Debug, Component)]
-struct FoundationSquare;
+struct Foundation;
 
 #[derive(Debug, Component)]
-struct BlockSquare;
+struct Block;
 
 #[derive(Debug, Component)]
-struct PossibilitiesSquare;
+struct Possibilities;
 
 fn spawn_sudoku_board(
     commands: &mut Commands<'_, '_>,
@@ -567,7 +637,7 @@ fn spawn_sudoku_board(
                     spawn_info.clone(),
                     None,
                 ),
-                FoundationSquare,
+                Foundation,
             ))
             .with_children(|builder| {
                 let width = spawn_info.width;
@@ -580,7 +650,7 @@ fn spawn_sudoku_board(
                         spawn_info.clone(),
                         Some(master_index),
                     );
-                    builder.spawn((bundle, BlockSquare));
+                    builder.spawn((bundle, Block));
                 }
             });
     }
