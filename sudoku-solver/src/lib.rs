@@ -332,6 +332,8 @@ impl SudokuBoard {
         possible_numbers
     }
 
+    /// Updates possible values for each [`SudokuBlockStatus::Unresolved`] or [`SudokuBlockStatus::Possibilities`]
+    /// block based on [`SudokuBlockStatus::Fixed`] blocks values.
     pub fn update_possibilities(&mut self) {
         use SudokuNumber::*;
         for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
@@ -348,10 +350,13 @@ impl SudokuBoard {
         }
     }
 
+    /// Since these strategies work with possible values in blocks and updating them,
+    /// Then [`SudokuBoard::update_possibilities`] is always called before engaging the strategy.
     pub fn engage_strategy<S>(&mut self, strategy: S)
     where
         S: SudokuSolvingStrategy,
     {
+        self.update_possibilities();
         strategy.update_possible_numbers(self);
     }
 

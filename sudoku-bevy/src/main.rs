@@ -9,6 +9,7 @@ use bevy::{
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
 };
+use sudoku_bevy::pancam::{DirectionKeys, PanCam, PanCamPlugin};
 use sudoku_solver::{
     BlockIndex, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
@@ -55,7 +56,7 @@ struct DefaultMaterials {
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins)
+        .add_plugins((DefaultPlugins, PanCamPlugin::default()))
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SelectedBlock>()
         .init_resource::<DefaultMaterials>()
@@ -115,7 +116,30 @@ fn setup(
     mut defaults: ResMut<DefaultMaterials>,
     asset_server: Res<AssetServer>,
 ) {
-    commands.spawn(Camera2d);
+    let mut ortho = OrthographicProjection::default_2d();
+    ortho.scale = 1.5;
+
+    commands.spawn((
+        Camera2d,
+        Projection::Orthographic(ortho),
+        PanCam {
+            grab_buttons: vec![MouseButton::Left], // which buttons should drag the camera
+            move_keys: DirectionKeys {
+                // the keyboard buttons used to move the camera
+                up: vec![KeyCode::KeyW], // initalize the struct like this or use the provided methods for
+                down: vec![KeyCode::KeyS], // common key combinations
+                left: vec![KeyCode::KeyA],
+                right: vec![KeyCode::KeyD],
+            },
+            min_scale: 1., // prevent the camera from zooming too far in
+            max_scale: 5., // prevent the camera from zooming too far out
+            min_x: -1500., // minimum x position of the camera window
+            max_x: 1500.,  // maximum x position of the camera window
+            min_y: -1500., // minimum y position of the camera window
+            max_y: 1500.,  // maximum y position of the camera window
+            ..Default::default()
+        },
+    ));
 
     let center = vec2(0., -50.);
     let width = 630.;
@@ -141,6 +165,23 @@ fn setup(
 
     spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
 
+    let font = asset_server.load("fonts/FiraSans-Bold.ttf");
+
+    commands.spawn((
+        Text2d::new("Sudoku".to_string()),
+        TextFont {
+            font: font.clone(),
+            font_size: 100.,
+            ..default()
+        },
+        TextColor(Color::from(WHITE)),
+        TextLayout::new(Justify::Center, LineBreak::WordBoundary),
+        Transform::default().with_translation(Vec3 {
+            y: 450.,
+            ..Default::default()
+        }),
+    ));
+
     commands
         .spawn((
             Mesh2d(meshes.add(Rectangle::new(620., 100.))),
@@ -157,7 +198,6 @@ fn setup(
                     MeshMaterial2d(defaults.default_block_color.clone()),
                 ))
                 .with_children(|builder| {
-                    let font = asset_server.load("fonts/FiraSans-Bold.ttf");
                     let text_font = TextFont {
                         font: font.clone(),
                         font_size: 17.,
