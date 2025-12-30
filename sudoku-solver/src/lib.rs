@@ -381,25 +381,24 @@ impl SudokuBoard {
         if let SudokuBlockStatus::Resolved(resolved) = block.status {
             let mut mistakes = vec![];
 
-            let mut row_mistakes = find_mistake_in_container(self.get_row(index.row));
-            let mut col_mistakes = find_mistake_in_container(self.get_col(index.col));
-            let mut square_mistakes =
-                find_mistake_in_container(self.get_square(index.square_number()));
+            let mut row_m =
+                find_similar_in_container(resolved, self.get_row(index.row), Some(&block.index));
+            let mut col_m =
+                find_similar_in_container(resolved, self.get_col(index.col), Some(&block.index));
+            let mut square_m = find_similar_in_container(
+                resolved,
+                self.get_square(index.square_number()),
+                Some(&block.index),
+            );
 
-            if let Some(row_m) = row_mistakes.get_mut(&resolved) {
-                mistakes.append(row_m);
-            }
-            if let Some(col_m) = col_mistakes.get_mut(&resolved) {
-                mistakes.append(col_m);
-            }
-            if let Some(square_m) = square_mistakes.get_mut(&resolved) {
-                mistakes.append(square_m);
-            }
+            mistakes.append(&mut row_m);
+            mistakes.append(&mut col_m);
+            mistakes.append(&mut square_m);
+            mistakes.dedup();
 
             if mistakes.is_empty() {
                 return None;
             } else {
-                mistakes.dedup();
                 return Some(mistakes);
             }
         }
@@ -435,10 +434,12 @@ impl SudokuBoard {
             let mut numbers = HashMap::new();
             let poss = &block.status.as_possibilities().unwrap().numbers;
             for pos in poss.get_numbers() {
-                let mut row_similar = find_similar_in_container(pos, self.get_row(block.row()));
-                let mut col_similar = find_similar_in_container(pos, self.get_col(block.col()));
+                let mut row_similar =
+                    find_similar_in_container(pos, self.get_row(block.row()), None);
+                let mut col_similar =
+                    find_similar_in_container(pos, self.get_col(block.col()), None);
                 let mut square_similar =
-                    find_similar_in_container(pos, self.get_square(block.square_number()));
+                    find_similar_in_container(pos, self.get_square(block.square_number()), None);
 
                 row_similar.append(&mut col_similar);
                 row_similar.append(&mut square_similar);
@@ -488,6 +489,7 @@ pub fn find_mistake_in_container<'s>(
 pub fn find_similar_in_container<'s>(
     number: SudokuNumber,
     iterator: impl Iterator<Item = &'s SudokuBlock>,
+    ignore_index: Option<&BlockIndex>,
 ) -> Vec<BlockIndex> {
     let mut counts = Vec::new();
 
@@ -497,6 +499,12 @@ pub fn find_similar_in_container<'s>(
             | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number,
             _ => continue,
         };
+
+        if let Some(ignore) = ignore_index {
+            if &x.index == ignore {
+                continue;
+            }
+        }
 
         if number == found_number {
             counts.push(x.index.clone());

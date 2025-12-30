@@ -3,8 +3,8 @@ use std::time::Duration;
 use bevy::{
     color::palettes::{
         basic::PURPLE,
-        css::{BLACK, BLUE, RED, WHITE, YELLOW},
-        tailwind::{BLUE_200, RED_400, YELLOW_400},
+        css::{BLACK, BLUE, GRAY, RED, WHITE, YELLOW},
+        tailwind::{BLUE_200, GRAY_500, GRAY_600, GRAY_700, RED_400, YELLOW_400},
     },
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
@@ -135,9 +135,9 @@ fn setup(
     defaults.conflicting_affected_color = materials.add(Color::from(RED_400));
 
     defaults.default_base_text_color = Color::from(BLACK);
-    defaults.default_fixed_number_color = Color::from(BLACK);
+    defaults.default_fixed_number_color = Color::from(GRAY_600);
     defaults.default_possibility_number_color = Color::from(WHITE);
-    defaults.default_resolved_number_color = Color::from(BLUE);
+    defaults.default_resolved_number_color = Color::from(BLACK);
 
     spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
 
