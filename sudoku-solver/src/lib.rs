@@ -35,6 +35,7 @@ impl BlockIndex {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Conflicting {
     AffectedBy(BlockIndex),
+    AffectedByPossibilities(BlockIndex),
     Source,
 }
 
@@ -413,7 +414,12 @@ impl SudokuBoard {
             }
         }
 
-        self.get_blocks_mut().for_each(|f| f.conflicting = None);
+        self.get_blocks_mut()
+            .filter(|f| {
+                matches!(f.conflicting, Some(Conflicting::AffectedBy(_)))
+                    || matches!(f.conflicting, Some(Conflicting::Source))
+            })
+            .for_each(|f| f.conflicting = None);
 
         for (source_index, affected_indexes) in conflicts.iter() {
             self.get_block_mut(source_index).conflicting = Some(Conflicting::Source);
@@ -455,12 +461,28 @@ impl SudokuBoard {
             }
         }
 
-        for conflict in conflicts {
+        self.get_blocks_mut()
+            .filter_map(|f| f.status.as_possibilities_mut())
+            .for_each(|f| f.conflicting_numbers = Default::default());
+
+        for conflict in conflicts.iter() {
             let block = self.get_block_mut(&conflict.0);
             if let SudokuBlockStatus::Possibilities(poss) = &mut block.status {
                 for number in conflict.1 {
-                    poss.conflicting_numbers.set_number(number.0);
-                    //TODO - Find a way to mark conflicting blocks as well
+                    poss.conflicting_numbers.set_number(number.0.clone());
+                }
+            }
+        }
+
+        self.get_blocks_mut()
+            .filter(|f| matches!(f.conflicting, Some(Conflicting::AffectedByPossibilities(_))))
+            .for_each(|f| f.conflicting = None);
+
+        for conflict in conflicts {
+            for (_, indexes) in conflict.1 {
+                for index in indexes {
+                    let block = self.get_block_mut(&index);
+                    block.conflicting = Some(Conflicting::AffectedBy(conflict.0.clone()));
                 }
             }
         }

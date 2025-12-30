@@ -3,8 +3,8 @@ use std::time::Duration;
 use bevy::{
     color::palettes::{
         basic::PURPLE,
-        css::{BLACK, BLUE, GRAY, RED, WHITE, YELLOW},
-        tailwind::{BLUE_200, GRAY_500, GRAY_600, GRAY_700, RED_400, YELLOW_400},
+        css::{BLACK, BLUE, RED, WHITE, YELLOW},
+        tailwind::{BLUE_200, GRAY_600, RED_400, YELLOW_400},
     },
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
@@ -335,6 +335,9 @@ fn update_board(
                             sudoku_solver::Conflicting::Source => {
                                 material.0 = defaults.conflicting_source_color.clone();
                             }
+                            sudoku_solver::Conflicting::AffectedByPossibilities(_) => {
+                                material.0 = defaults.conflicting_affected_color.clone();
+                            }
                         },
                         None => {
                             material.0 = defaults.default_block_color.clone();
@@ -430,6 +433,9 @@ fn update_selected_block(
                     }
                     sudoku_solver::Conflicting::Source => {
                         material.0 = defaults.conflicting_source_color.clone();
+                    }
+                    sudoku_solver::Conflicting::AffectedByPossibilities(_) => {
+                        material.0 = defaults.conflicting_affected_color.clone();
                     }
                 },
                 None => {

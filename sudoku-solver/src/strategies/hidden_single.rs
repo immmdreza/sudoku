@@ -11,6 +11,8 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
     fn update_possible_numbers(&self, board: &mut crate::SudokuBoard) {
         use SudokuNumber::*;
 
+        board.update_possibilities();
+
         for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
             for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
                 let mut hidden_number = None;
