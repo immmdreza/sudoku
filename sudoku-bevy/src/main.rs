@@ -11,7 +11,7 @@ use bevy::{
 };
 use sudoku_bevy::pancam::{DirectionKeys, PanCam, PanCamPlugin};
 use sudoku_solver::{
-    BlockIndex, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
+    BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
     strategies::hidden_single::HiddenSingleStrategy,
 };
@@ -54,14 +54,27 @@ struct DefaultMaterials {
     default_possibility_number_color: Color,
 }
 
+#[derive(Debug, Resource, Default)]
+struct Stats {
+    /// Mistakes while resolving a block number
+    mistakes: u32,
+
+    /// Mistakes while marking a number as possible in a block
+    possibility_mistakes: u32,
+}
+
+#[derive(Debug, Component)]
+struct MistakesCountText;
+
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, PanCamPlugin::default()))
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SelectedBlock>()
         .init_resource::<DefaultMaterials>()
+        .init_resource::<Stats>()
         .insert_resource(ChangeSelectionTimer(Timer::new(
-            Duration::from_millis(120),
+            Duration::from_millis(100),
             TimerMode::Repeating,
         )))
         .add_systems(Startup, setup)
@@ -102,6 +115,7 @@ fn main() {
             (
                 update_selected_block.run_if(resource_changed::<SelectedBlock>),
                 update_board.run_if(resource_changed::<SudokuBoardResources>),
+                update_mistakes_text.run_if(resource_changed::<Stats>),
             )
                 .chain(),
         )
@@ -181,6 +195,34 @@ fn setup(
             ..Default::default()
         }),
     ));
+
+    commands
+        .spawn((
+            Text2d::new("Mistakes: "),
+            TextFont {
+                font: font.clone(),
+                font_size: 20.,
+                ..default()
+            },
+            TextColor(Color::from(WHITE)),
+            Transform::default().with_translation(Vec3 {
+                y: 380.,
+                ..Default::default()
+            }),
+        ))
+        .with_children(|parent| {
+            parent.spawn((
+                TextSpan::new("0 / 0"),
+                TextFont {
+                    font: font.clone(),
+                    font_size: 20.,
+                    ..default()
+                },
+                TextColor(Color::from(RED)),
+                // TextBackgroundColor(Color::from(WHITE)),
+                MistakesCountText,
+            ));
+        });
 
     commands
         .spawn((
@@ -375,7 +417,7 @@ fn update_board(
                             sudoku_solver::Conflicting::Source => {
                                 material.0 = defaults.conflicting_source_color.clone();
                             }
-                            sudoku_solver::Conflicting::AffectedByPossibilities(_) => {
+                            sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
                                 material.0 = defaults.conflicting_affected_color.clone();
                             }
                         },
@@ -474,7 +516,7 @@ fn update_selected_block(
                     sudoku_solver::Conflicting::Source => {
                         material.0 = defaults.conflicting_source_color.clone();
                     }
-                    sudoku_solver::Conflicting::AffectedByPossibilities(_) => {
+                    sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
                         material.0 = defaults.conflicting_affected_color.clone();
                     }
                 },
@@ -544,15 +586,16 @@ fn manually_clear_block(
     keyboard_input: Res<ButtonInput<KeyCode>>,
     selected: Res<SelectedBlock>,
 ) {
-    let block = sudoku_board
-        .current
-        .get_block_mut(&BlockIndex::from_index(selected.current.1, selected.current.0).unwrap());
+    let block_index = BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
+    let block = sudoku_board.current.get_block_mut(&block_index);
 
     match &block.status {
         SudokuBlockStatus::Fixed(_) => (),
         _ => {
             if keyboard_input.just_pressed(KeyCode::KeyC) {
                 block.status = SudokuBlockStatus::Unresolved;
+
+                sudoku_board.current.mark_conflicts(&block_index, None);
             }
         }
     }
@@ -560,84 +603,160 @@ fn manually_clear_block(
 
 fn manually_update_block(
     mut sudoku_board: ResMut<SudokuBoardResources>,
+    mut stats: ResMut<Stats>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
     selected: Res<SelectedBlock>,
 ) {
-    let block = sudoku_board
-        .current
-        .get_block_mut(&BlockIndex::from_index(selected.current.1, selected.current.0).unwrap());
+    let block_index = BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
+    let block = sudoku_board.current.get_block_mut(&block_index);
+
+    // let digit_map = |digit: KeyCode| match digit {
+    //     KeyCode::Digit1 => Some(SudokuNumber::One),
+    //     KeyCode::Digit2 => Some(SudokuNumber::Two),
+    //     KeyCode::Digit3 => Some(SudokuNumber::Three),
+    //     KeyCode::Digit4 => Some(SudokuNumber::Four),
+    //     KeyCode::Digit5 => Some(SudokuNumber::Five),
+    //     KeyCode::Digit6 => Some(SudokuNumber::Six),
+    //     KeyCode::Digit7 => Some(SudokuNumber::Seven),
+    //     KeyCode::Digit8 => Some(SudokuNumber::Eight),
+    //     KeyCode::Digit9 => Some(SudokuNumber::Nine),
+    //     _ => None,
+    // };
 
     match &block.status {
         SudokuBlockStatus::Fixed(_) => (),
         _ => {
-            if keyboard_input.just_pressed(KeyCode::Digit1) {
-                _update_block(&selected, block, SudokuNumber::One);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit2) {
-                _update_block(&selected, block, SudokuNumber::Two);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit3) {
-                _update_block(&selected, block, SudokuNumber::Three);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit4) {
-                _update_block(&selected, block, SudokuNumber::Four);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit5) {
-                _update_block(&selected, block, SudokuNumber::Five);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit6) {
-                _update_block(&selected, block, SudokuNumber::Six);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit7) {
-                _update_block(&selected, block, SudokuNumber::Seven);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit8) {
-                _update_block(&selected, block, SudokuNumber::Eight);
-            }
-            if keyboard_input.just_pressed(KeyCode::Digit9) {
-                _update_block(&selected, block, SudokuNumber::Nine);
+            let update_result = if keyboard_input.just_pressed(KeyCode::Digit1) {
+                Some(_update_block(&selected, block, SudokuNumber::One))
+            } else if keyboard_input.just_pressed(KeyCode::Digit2) {
+                Some(_update_block(&selected, block, SudokuNumber::Two))
+            } else if keyboard_input.just_pressed(KeyCode::Digit3) {
+                Some(_update_block(&selected, block, SudokuNumber::Three))
+            } else if keyboard_input.just_pressed(KeyCode::Digit4) {
+                Some(_update_block(&selected, block, SudokuNumber::Four))
+            } else if keyboard_input.just_pressed(KeyCode::Digit5) {
+                Some(_update_block(&selected, block, SudokuNumber::Five))
+            } else if keyboard_input.just_pressed(KeyCode::Digit6) {
+                Some(_update_block(&selected, block, SudokuNumber::Six))
+            } else if keyboard_input.just_pressed(KeyCode::Digit7) {
+                Some(_update_block(&selected, block, SudokuNumber::Seven))
+            } else if keyboard_input.just_pressed(KeyCode::Digit8) {
+                Some(_update_block(&selected, block, SudokuNumber::Eight))
+            } else if keyboard_input.just_pressed(KeyCode::Digit9) {
+                Some(_update_block(&selected, block, SudokuNumber::Nine))
+            } else {
+                None
+            };
+
+            match update_result {
+                Some(result) => {
+                    match result {
+                        BlockUpdateResult::Cleared => {
+                            sudoku_board.current.mark_conflicts(&block_index, None);
+                        }
+                        BlockUpdateResult::Resolved => {
+                            sudoku_board.current.mark_conflicts(&block_index, None);
+
+                            let block = sudoku_board.current.get_block(&block_index);
+                            if block
+                                .conflicting
+                                .as_ref()
+                                .is_some_and(|f| matches!(f, Conflicting::Source))
+                            {
+                                // This is a mistake!
+                                stats.mistakes += 1;
+                                println!("This is a mistake!")
+                            }
+                        }
+                        BlockUpdateResult::Possible { number, is_cleared } => {
+                            sudoku_board
+                                .current
+                                .mark_conflicts(&block_index, Some((number, is_cleared)));
+
+                            let block = sudoku_board.current.get_block(&block_index);
+                            let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
+
+                            if poss.is_conflicting(number) {
+                                // This is also a mistake
+                                stats.possibility_mistakes += 1;
+                                println!("This is also a mistake!")
+                            }
+                        }
+                    }
+                }
+                None => (),
             }
         }
     }
+}
 
-    sudoku_board.current.mark_conflicts();
-    sudoku_board.current.mark_possibilities_conflicts();
+enum BlockUpdateResult {
+    Cleared,
+    Resolved,
+    Possible {
+        number: SudokuNumber,
+        is_cleared: bool,
+    },
 }
 
 fn _update_block(
     selected: &SelectedBlock,
     block: &mut sudoku_solver::SudokuBlock,
     number: SudokuNumber,
-) -> bool {
-    let mut need_checking_conflicts = false;
+) -> BlockUpdateResult {
+    use BlockUpdateResult::*;
+
     match selected.mode {
         SelectionMode::Resolving => {
             if let SudokuBlockStatus::Resolved(already) = block.status
                 && already == number
             {
                 block.status = SudokuBlockStatus::Unresolved;
-                return true;
+                return Cleared;
             }
 
             block.status = SudokuBlockStatus::Resolved(number);
-            need_checking_conflicts = true;
+            return Resolved;
         }
         SelectionMode::Possibilities => {
             if let Some(pos) = block.status.as_possibilities_mut() {
                 if pos.numbers.has_number(number) {
                     pos.numbers.del_number(number);
+
+                    if pos.numbers.count_numbers() == 0 {
+                        block.status = SudokuBlockStatus::Unresolved;
+                        return Cleared;
+                    } else {
+                        return Possible {
+                            number,
+                            is_cleared: true,
+                        };
+                    }
                 } else {
                     pos.numbers.set_number(number);
+                    return Possible {
+                        number,
+                        is_cleared: false,
+                    };
                 }
             } else {
                 block.status = SudokuBlockStatus::Possibilities(SudokuPossibilities::new(
                     SudokuNumbers::new([number]),
                 ));
+                return Possible {
+                    number,
+                    is_cleared: false,
+                };
             }
         }
     }
+}
 
-    need_checking_conflicts
+fn update_mistakes_text(
+    stats: Res<Stats>,
+    mut mistakes_text: Single<&mut TextSpan, With<MistakesCountText>>,
+) {
+    mistakes_text.0 = format!("{} / {}", stats.mistakes, stats.possibility_mistakes);
 }
 
 #[derive(Debug, Component)]

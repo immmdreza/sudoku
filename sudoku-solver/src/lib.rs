@@ -35,8 +35,65 @@ impl BlockIndex {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Conflicting {
     AffectedBy(BlockIndex),
-    AffectedByPossibilities(BlockIndex),
+    AffectedByPossibilities {
+        block_index: BlockIndex,
+        number: SudokuNumber,
+    },
     Source,
+}
+
+impl Conflicting {
+    /// Returns `true` if the conflicting is [`AffectedBy`].
+    ///
+    /// [`AffectedBy`]: Conflicting::AffectedBy
+    #[must_use]
+    pub fn is_affected_by(&self) -> bool {
+        matches!(self, Self::AffectedBy(..))
+    }
+
+    /// Returns `true` if the conflicting is [`AffectedBy`].
+    ///
+    /// [`AffectedBy`]: Conflicting::AffectedBy
+    #[must_use]
+    pub fn is_affected_by_and(&self, f: impl FnOnce(&BlockIndex) -> bool) -> bool {
+        match self {
+            Conflicting::AffectedBy(block_index) => f(block_index),
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if the conflicting is [`AffectedByPossibilities`].
+    ///
+    /// [`AffectedByPossibilities`]: Conflicting::AffectedByPossibilities
+    #[must_use]
+    pub fn is_affected_by_possibilities(&self) -> bool {
+        matches!(self, Self::AffectedByPossibilities { .. })
+    }
+
+    /// Returns `true` if the conflicting is [`AffectedByPossibilities`].
+    ///
+    /// [`AffectedByPossibilities`]: Conflicting::AffectedByPossibilities
+    #[must_use]
+    pub fn is_affected_by_possibilities_and(
+        &self,
+        f: impl FnOnce(&BlockIndex, &SudokuNumber) -> bool,
+    ) -> bool {
+        match self {
+            Conflicting::AffectedByPossibilities {
+                block_index,
+                number,
+            } => f(block_index, number),
+            _ => false,
+        }
+    }
+
+    /// Returns `true` if the conflicting is [`Source`].
+    ///
+    /// [`Source`]: Conflicting::Source
+    #[must_use]
+    pub fn is_source(&self) -> bool {
+        matches!(self, Self::Source)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -411,83 +468,98 @@ impl SudokuBoard {
         None
     }
 
-    pub fn mark_conflicts(&mut self) {
-        let mut conflicts = HashMap::new();
-        for block in self.get_blocks().filter(|x| x.is_resolved()) {
-            if let Some(mistakes) = self.find_block_mistakes(block.index()) {
-                conflicts.insert(block.index.clone(), mistakes);
+    pub fn mark_conflicts(
+        &mut self,
+        index: &BlockIndex,
+        possibility_number_info: Option<(SudokuNumber, bool)>,
+    ) {
+        let block_status = &self.get_block(index).status;
+
+        match block_status {
+            SudokuBlockStatus::Unresolved => {
+                self.get_block_mut(index).conflicting = None;
+                self.get_blocks_mut()
+                    .filter(|f| {
+                        f.conflicting.as_ref().is_some_and(|conf| {
+                            conf.is_affected_by_and(|f| f == index)
+                                || conf.is_affected_by_possibilities_and(|block_index, _| {
+                                    block_index == index
+                                })
+                        })
+                    })
+                    .for_each(|f| f.conflicting = None);
             }
-        }
+            SudokuBlockStatus::Fixed(_) => (),
+            SudokuBlockStatus::Resolved(_) => {
+                if let Some(affected_indexes) = self.find_block_mistakes(index) {
+                    self.get_block_mut(index).conflicting = Some(Conflicting::Source);
+                    for affected in affected_indexes {
+                        if &affected == index {
+                            continue;
+                        }
 
-        self.get_blocks_mut()
-            .filter(|f| {
-                matches!(f.conflicting, Some(Conflicting::AffectedBy(_)))
-                    || matches!(f.conflicting, Some(Conflicting::Source))
-            })
-            .for_each(|f| f.conflicting = None);
-
-        for (source_index, affected_indexes) in conflicts.iter() {
-            self.get_block_mut(source_index).conflicting = Some(Conflicting::Source);
-            for affected in affected_indexes {
-                if affected == source_index {
-                    continue;
-                }
-
-                self.get_block_mut(affected).conflicting =
-                    Some(Conflicting::AffectedBy(source_index.clone()));
-            }
-        }
-    }
-
-    pub fn mark_possibilities_conflicts(&mut self) {
-        let mut conflicts = HashMap::new();
-        for block in self.get_blocks().filter(|x| x.is_possibilities()) {
-            let mut numbers = HashMap::new();
-            let poss = &block.status.as_possibilities().unwrap().numbers;
-            for pos in poss.get_numbers() {
-                let mut row_similar =
-                    find_similar_in_container(pos, self.get_row(block.row()), None);
-                let mut col_similar =
-                    find_similar_in_container(pos, self.get_col(block.col()), None);
-                let mut square_similar =
-                    find_similar_in_container(pos, self.get_square(block.square_number()), None);
-
-                row_similar.append(&mut col_similar);
-                row_similar.append(&mut square_similar);
-                row_similar.dedup();
-
-                if !row_similar.is_empty() {
-                    numbers.insert(pos, row_similar);
+                        self.get_block_mut(&affected).conflicting =
+                            Some(Conflicting::AffectedBy(index.clone()));
+                    }
+                } else {
+                    self.get_block_mut(index).conflicting = None;
+                    self.get_blocks_mut()
+                        .filter(|f| {
+                            f.conflicting
+                                .as_ref()
+                                .is_some_and(|conf| conf.is_affected_by_and(|f| f == index))
+                        })
+                        .for_each(|f| f.conflicting = None);
                 }
             }
+            SudokuBlockStatus::Possibilities(_) => {
+                if let Some((pos, is_cleared)) = possibility_number_info {
+                    let mut similar = vec![];
 
-            if !numbers.is_empty() {
-                conflicts.insert(block.index.clone(), numbers);
-            }
-        }
+                    if !is_cleared {
+                        let mut row_similar =
+                            find_similar_in_container(pos, self.get_row(index.row), None);
+                        let mut col_similar =
+                            find_similar_in_container(pos, self.get_col(index.col), None);
+                        let mut square_similar = find_similar_in_container(
+                            pos,
+                            self.get_square(index.square_number()),
+                            None,
+                        );
 
-        self.get_blocks_mut()
-            .filter_map(|f| f.status.as_possibilities_mut())
-            .for_each(|f| f.conflicting_numbers = Default::default());
+                        similar.append(&mut row_similar);
+                        similar.append(&mut col_similar);
+                        similar.append(&mut square_similar);
+                        similar.dedup();
+                    }
 
-        for conflict in conflicts.iter() {
-            let block = self.get_block_mut(&conflict.0);
-            if let SudokuBlockStatus::Possibilities(poss) = &mut block.status {
-                for number in conflict.1 {
-                    poss.conflicting_numbers.set_number(number.0.clone());
-                }
-            }
-        }
+                    if !similar.is_empty() {
+                        let block = self.get_block_mut(index);
+                        let poss = block.status.as_possibilities_mut().unwrap();
+                        poss.conflicting_numbers.set_number(pos);
 
-        self.get_blocks_mut()
-            .filter(|f| matches!(f.conflicting, Some(Conflicting::AffectedByPossibilities(_))))
-            .for_each(|f| f.conflicting = None);
+                        for block_index in similar {
+                            let block = self.get_block_mut(&block_index);
+                            block.conflicting = Some(Conflicting::AffectedByPossibilities {
+                                block_index: index.clone(),
+                                number: pos,
+                            });
+                        }
+                    } else {
+                        let block = self.get_block_mut(index);
+                        let poss = block.status.as_possibilities_mut().unwrap();
+                        poss.conflicting_numbers.del_number(pos);
 
-        for conflict in conflicts {
-            for (_, indexes) in conflict.1 {
-                for index in indexes {
-                    let block = self.get_block_mut(&index);
-                    block.conflicting = Some(Conflicting::AffectedBy(conflict.0.clone()));
+                        self.get_blocks_mut()
+                            .filter(|f| {
+                                f.conflicting.as_ref().is_some_and(|conf| {
+                                    conf.is_affected_by_possibilities_and(|block_index, number| {
+                                        block_index == index && number == &pos
+                                    })
+                                })
+                            })
+                            .for_each(|f| f.conflicting = None);
+                    }
                 }
             }
         }
@@ -501,8 +573,7 @@ pub fn find_mistake_in_container<'s>(
 
     for x in iterator {
         let number = match x.status {
-            SudokuBlockStatus::Fixed(sudoku_number)
-            | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number,
+            SudokuBlockStatus::Fixed(sudoku_number) => sudoku_number,
             _ => continue,
         };
 
@@ -522,8 +593,7 @@ pub fn find_similar_in_container<'s>(
 
     for x in iterator {
         let found_number = match x.status {
-            SudokuBlockStatus::Fixed(sudoku_number)
-            | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number,
+            SudokuBlockStatus::Fixed(sudoku_number) => sudoku_number,
             _ => continue,
         };
 
@@ -583,12 +653,6 @@ mod tests {
         board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
 
         board.get_block_mut(&BlockIndex::new(One, One)).status = SudokuBlockStatus::Resolved(Seven);
-        board.mark_conflicts();
-
-        let conflicting = board
-            .get_blocks()
-            .filter(|f| f.conflicting.is_some())
-            .collect::<Vec<_>>();
-        println!("{:?}", conflicting);
+        //TODO -
     }
 }
