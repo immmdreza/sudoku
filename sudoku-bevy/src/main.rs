@@ -305,7 +305,7 @@ fn update_board(
             let block_index = BlockIndex::new(row, col);
             let block = board.current.get_block(&block_index);
             let snapshot_block = board.snapshot.get_block(&block_index);
-            let (j, i) = block_index.actual_index();
+            let (j, i) = block_index.actual_indexes();
 
             if block.status != snapshot_block.status {
                 snapshot_should_update = true;
