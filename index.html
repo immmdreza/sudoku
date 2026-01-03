@@ -2,9 +2,10 @@
   <head>
     <link rel="stylesheet" href="/sudoku/index-597d90855083f957.css" integrity="sha384-7GZOiJ7WwbJ2PKz3iZ2Vt/NHNz65guUjQZ/uo6o2LYkbO/Al8pImelhUBJCReJw+"/>
     
+    
 <script type="module">
-import init, * as bindings from '/sudoku/sudoku-bevy-47d6c16f20a9124b.js';
-const wasm = await init({ module_or_path: '/sudoku/sudoku-bevy-47d6c16f20a9124b_bg.wasm' });
+import init, * as bindings from '/sudoku/sudoku-bevy-20bae8f5a6081420.js';
+const wasm = await init({ module_or_path: '/sudoku/sudoku-bevy-20bae8f5a6081420_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -13,5 +14,5 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="/sudoku/sudoku-bevy-47d6c16f20a9124b.js" crossorigin="anonymous" integrity="sha384-lUxPrn4ZglURPmsjGMIDZVDA3TP+Q0UmXQZIaBi5wiTHS41/Pvs/6aPoKmYhgPhR"><link rel="preload" href="/sudoku/sudoku-bevy-47d6c16f20a9124b_bg.wasm" crossorigin="anonymous" integrity="sha384-8xsZTuOSObjStefRxoOgfIsC6MXripJXpVC5DTdGm6g+oc4+IjI0ybejI715n5wY" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/sudoku/sudoku-bevy-20bae8f5a6081420.js" crossorigin="anonymous" integrity="sha384-yDO2p+P9sKhm1vqNsdCwK9kiIeXmo6AuyFfFuuT8/2UGkO0eOvrW8F2+9WJNbM9V"><link rel="preload" href="/sudoku/sudoku-bevy-20bae8f5a6081420_bg.wasm" crossorigin="anonymous" integrity="sha384-kGy1LUii7MslGJyyu3crxLdqIX0OOkBItiDn542YWSlbQpGjqTfXPNtvXDoQOP/N" as="fetch" type="application/wasm"></head>
 </html>
