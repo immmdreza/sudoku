@@ -187,11 +187,7 @@ fn setup(
 
     spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
 
-    #[cfg(target_arch = "wasm32")]
-    let font = asset_server.load("assets/fonts/FiraSans-Bold.ttf");
-    #[cfg(not(target_arch = "wasm32"))]
     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
-
     defaults_assets.default_font = font;
 
     commands.spawn((
