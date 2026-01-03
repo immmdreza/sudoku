@@ -3,11 +3,12 @@ name = "sudoku-bevy"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+default = ["dynamic_linking"]
+dynamic_linking = ["bevy/dynamic_linking", "bevy_dylib"]
+
 [dependencies]
 sudoku-solver = { version = "0.1.0", path = "../sudoku-solver" }
-bevy = { version = "0.18.0-rc.1", default-features = false, features = [
-    "2d",
-    "dynamic_linking",
-] }
-bevy_dylib = { version = "0.18.0-rc.1" }
+bevy = { version = "0.18.0-rc.1", default-features = false, features = ["2d"] }
+bevy_dylib = { version = "0.18.0-rc.1", optional = true }
 sudoku-samples = { version = "0.1.0", path = "../sudoku-samples" }

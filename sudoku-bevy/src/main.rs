@@ -212,7 +212,7 @@ fn setup(
         ))
         .with_children(|parent| {
             parent.spawn((
-                TextSpan::new("0 / 0"),
+                TextSpan::new("0 (Numbers) / 0 (Possibilities)"),
                 TextFont {
                     font: font.clone(),
                     font_size: 20.,
@@ -756,7 +756,10 @@ fn update_mistakes_text(
     stats: Res<Stats>,
     mut mistakes_text: Single<&mut TextSpan, With<MistakesCountText>>,
 ) {
-    mistakes_text.0 = format!("{} / {}", stats.mistakes, stats.possibility_mistakes);
+    mistakes_text.0 = format!(
+        "{} (Numbers) / {} (Possibilities)",
+        stats.mistakes, stats.possibility_mistakes
+    );
 }
 
 #[derive(Debug, Component)]
