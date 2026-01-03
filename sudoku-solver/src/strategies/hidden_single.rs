@@ -84,7 +84,7 @@ where
 
     let hidden = possibles
         .numbers
-        .get_numbers()
+        .iter()
         .filter(|f| !row_pos.has_number(*f))
         .collect::<Vec<_>>();
     if hidden.len() == 1 {
@@ -100,7 +100,7 @@ pub fn get_all_possible_numbers<'s>(
     iterator.filter_map(|f| f.status.as_possibilities()).fold(
         SudokuNumbers::default(),
         |mut acc, fold| {
-            for f in fold.numbers.get_numbers() {
+            for f in fold.numbers.iter() {
                 acc.set_number(f);
             }
             acc

@@ -64,9 +64,15 @@ pub struct SudokuNumbers {
     numbers: [bool; 9],
 }
 
+impl From<[bool; 9]> for SudokuNumbers {
+    fn from(numbers: [bool; 9]) -> Self {
+        Self { numbers }
+    }
+}
+
 impl std::fmt::Debug for SudokuNumbers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        self.get_numbers().collect::<Vec<_>>().fmt(f)
+        self.iter().collect::<Vec<_>>().fmt(f)
     }
 }
 
@@ -85,7 +91,7 @@ impl SudokuNumbers {
         Self { numbers: [true; 9] }
     }
 
-    pub fn get_numbers(&self) -> impl Iterator<Item = SudokuNumber> {
+    pub fn iter(&self) -> impl Iterator<Item = SudokuNumber> {
         self.numbers
             .iter()
             .enumerate()
@@ -93,12 +99,32 @@ impl SudokuNumbers {
             .map(|(index, _)| (index + 1).try_into().unwrap())
     }
 
+    pub fn into_iter(self) -> impl Iterator<Item = SudokuNumber> {
+        self.numbers
+            .into_iter()
+            .enumerate()
+            .filter(|(_, available)| *available)
+            .map(|(index, _)| (index + 1).try_into().unwrap())
+    }
+
     pub fn set_number(&mut self, number: SudokuNumber) {
         self.numbers[number.to_index()] = true;
     }
 
+    pub fn set_numbers(&mut self, numbers: impl Iterator<Item = SudokuNumber>) {
+        for number in numbers {
+            self.set_number(number);
+        }
+    }
+
     pub fn del_number(&mut self, number: SudokuNumber) {
         self.numbers[number.to_index()] = false;
+    }
+
+    pub fn del_numbers(&mut self, numbers: impl Iterator<Item = SudokuNumber>) {
+        for number in numbers {
+            self.del_number(number);
+        }
     }
 
     pub fn has_number(&self, number: SudokuNumber) -> bool {
@@ -138,7 +164,7 @@ mod tests {
         assert!(!numbers.has_number(SudokuNumber::Eight));
 
         assert_eq!(
-            numbers.get_numbers().collect::<Vec<SudokuNumber>>(),
+            numbers.iter().collect::<Vec<SudokuNumber>>(),
             vec![SudokuNumber::One, SudokuNumber::Seven]
         );
 

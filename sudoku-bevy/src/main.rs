@@ -346,7 +346,7 @@ fn update_board(
 
                                 let numbers = sudoku_numbers
                                     .numbers
-                                    .get_numbers()
+                                    .iter()
                                     .map(|f| f.to_index())
                                     .map(|f| {
                                         let i = (f) / 3;

@@ -23,8 +23,12 @@ impl BlockIndex {
         Ok(Self::new((row + 1).try_into()?, (col + 1).try_into()?))
     }
 
-    pub fn actual_index(&self) -> (usize, usize) {
+    pub fn actual_indexes(&self) -> (usize, usize) {
         (self.row.to_index(), self.col.to_index())
+    }
+
+    pub fn indexes(&self) -> (SudokuNumber, SudokuNumber) {
+        (self.row, self.col)
     }
 
     pub fn square_number(&self) -> SudokuNumber {
@@ -239,6 +243,44 @@ impl SudokuBlockStatus {
     }
 }
 
+#[derive(Debug, Clone)]
+/// Refers to a row, column or an square in a sudoku board (Typically a sequence of blocks).
+pub struct SudokuContainer<T, Item>
+where
+    T: Iterator<Item = Item>,
+{
+    blocks: T,
+}
+
+impl<T, Item> SudokuContainer<T, Item>
+where
+    T: Iterator<Item = Item>,
+{
+    pub fn new(blocks: T) -> Self {
+        Self { blocks }
+    }
+}
+
+impl<'b, T> SudokuContainer<T, &'b SudokuBlock>
+where
+    T: Iterator<Item = &'b SudokuBlock>,
+{
+    pub fn get_numbers(self) -> SudokuNumbers {
+        get_numbers(self)
+    }
+}
+
+impl<T, Item> Iterator for SudokuContainer<T, Item>
+where
+    T: Iterator<Item = Item>,
+{
+    type Item = Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.blocks.next()
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct SudokuBoard {
     blocks: [[SudokuBlock; 9]; 9],
@@ -271,8 +313,8 @@ impl SudokuBoard {
     fn fill_board(&mut self, numbers: [[Option<SudokuNumber>; 9]; 9]) {
         for (row_index, row) in numbers.iter().enumerate() {
             for (col_index, &number_option) in row.iter().enumerate() {
-                let row = (row_index + 1).try_into().unwrap();
-                let col = (col_index + 1).try_into().unwrap();
+                let index = BlockIndex::from_index(row_index, col_index).unwrap();
+                let (row, col) = index.indexes();
 
                 self.blocks[row_index][col_index] = match number_option {
                     Some(number) => SudokuBlock::new(row, col, SudokuBlockStatus::Fixed(number)),
@@ -285,8 +327,8 @@ impl SudokuBoard {
     pub fn fill_board_u8(&mut self, numbers: [[Option<u8>; 9]; 9]) -> Result<(), ()> {
         for (row_index, row) in numbers.iter().enumerate() {
             for (col_index, &number_option) in row.iter().enumerate() {
-                let row = (row_index + 1).try_into().unwrap();
-                let col = (col_index + 1).try_into().unwrap();
+                let index = BlockIndex::from_index(row_index, col_index).unwrap();
+                let (row, col) = index.indexes();
 
                 self.blocks[row_index][col_index] = match number_option {
                     Some(number) => SudokuBlock::new(
@@ -309,82 +351,131 @@ impl SudokuBoard {
     }
 
     pub fn get_block(&self, index: &BlockIndex) -> &SudokuBlock {
-        let (row, col) = index.actual_index();
+        let (row, col) = index.actual_indexes();
         &self.blocks[row][col]
     }
 
     pub fn get_block_mut(&mut self, index: &BlockIndex) -> &mut SudokuBlock {
-        let (row, col) = index.actual_index();
+        let (row, col) = index.actual_indexes();
         &mut self.blocks[row][col]
     }
 
-    pub fn get_blocks(&self) -> impl Iterator<Item = &SudokuBlock> {
-        self.blocks.iter().flatten()
+    pub fn get_blocks(
+        &self,
+    ) -> SudokuContainer<std::iter::Flatten<std::slice::Iter<'_, [SudokuBlock; 9]>>, &SudokuBlock>
+    {
+        SudokuContainer::new(self.blocks.iter().flatten())
     }
 
-    pub fn get_blocks_mut(&mut self) -> impl Iterator<Item = &mut SudokuBlock> {
-        self.blocks.iter_mut().flatten()
+    pub fn get_blocks_mut(
+        &mut self,
+    ) -> SudokuContainer<
+        std::iter::Flatten<std::slice::IterMut<'_, [SudokuBlock; 9]>>,
+        &mut SudokuBlock,
+    > {
+        SudokuContainer::new(self.blocks.iter_mut().flatten())
     }
 
-    pub fn get_row(&self, row_number: SudokuNumber) -> impl Iterator<Item = &SudokuBlock> {
-        self.blocks[row_number.to_index()].iter()
+    pub fn get_row(
+        &self,
+        row_number: SudokuNumber,
+    ) -> SudokuContainer<std::slice::Iter<'_, SudokuBlock>, &SudokuBlock> {
+        SudokuContainer::new(self.blocks[row_number.to_index()].iter())
     }
 
     pub fn get_row_mut(
         &mut self,
         row_number: SudokuNumber,
-    ) -> impl Iterator<Item = &mut SudokuBlock> {
-        self.blocks[row_number.to_index()].iter_mut()
+    ) -> SudokuContainer<std::slice::IterMut<'_, SudokuBlock>, &mut SudokuBlock> {
+        SudokuContainer::new(self.blocks[row_number.to_index()].iter_mut())
     }
 
-    pub fn get_col(&self, column_number: SudokuNumber) -> impl Iterator<Item = &SudokuBlock> {
-        self.blocks
-            .iter()
-            .map(move |row| &row[column_number.to_index()])
-    }
-
-    pub fn get_col_mut(
-        &mut self,
+    pub fn get_col<'b>(
+        &'b self,
         column_number: SudokuNumber,
-    ) -> impl Iterator<Item = &mut SudokuBlock> {
-        self.blocks
-            .iter_mut()
-            .map(move |row| &mut row[column_number.to_index()])
+    ) -> SudokuContainer<
+        std::iter::Map<
+            std::slice::Iter<'b, [SudokuBlock; 9]>,
+            impl FnMut(&'b [SudokuBlock; 9]) -> &'b SudokuBlock + 'b,
+        >,
+        &'b SudokuBlock,
+    > {
+        SudokuContainer::new(
+            self.blocks
+                .iter()
+                .map(move |row| &row[column_number.to_index()]),
+        )
     }
 
-    pub fn get_square(&self, square_number: SudokuNumber) -> impl Iterator<Item = &SudokuBlock> {
-        let start_row = (square_number.to_index() / 3) * 3;
-        let start_col = (square_number.to_index() % 3) * 3;
-        self.blocks[start_row..start_row + 3]
-            .iter()
-            .flat_map(move |row| &row[start_col..start_col + 3])
+    pub fn get_col_mut<'b>(
+        &'b mut self,
+        column_number: SudokuNumber,
+    ) -> SudokuContainer<
+        std::iter::Map<
+            std::slice::IterMut<'b, [SudokuBlock; 9]>,
+            impl FnMut(&'b mut [SudokuBlock; 9]) -> &'b mut SudokuBlock,
+        >,
+        &'b mut SudokuBlock,
+    > {
+        SudokuContainer::new(
+            self.blocks
+                .iter_mut()
+                .map(move |row| &mut row[column_number.to_index()]),
+        )
     }
 
-    pub fn get_square_mut(
-        &mut self,
+    pub fn get_square<'b>(
+        &'b self,
         square_number: SudokuNumber,
-    ) -> impl Iterator<Item = &mut SudokuBlock> {
-        let start_row = (square_number.to_index() / 3) * 3;
-        let start_col = (square_number.to_index() % 3) * 3;
-        self.blocks[start_row..start_row + 3]
-            .iter_mut()
-            .flat_map(move |row| &mut row[start_col..start_col + 3])
+    ) -> SudokuContainer<
+        std::iter::FlatMap<
+            std::slice::Iter<'b, [SudokuBlock; 9]>,
+            &'b [SudokuBlock],
+            impl FnMut(&'b [SudokuBlock; 9]) -> &'b [SudokuBlock],
+        >,
+        &'b SudokuBlock,
+    > {
+        let (start_row, start_col) = square_number_to_index(square_number);
+        SudokuContainer::new(
+            self.blocks[start_row..start_row + 3]
+                .iter()
+                .flat_map(move |row| &row[start_col..start_col + 3]),
+        )
+    }
+
+    pub fn get_square_mut<'b>(
+        &'b mut self,
+        square_number: SudokuNumber,
+    ) -> SudokuContainer<
+        std::iter::FlatMap<
+            std::slice::IterMut<'b, [SudokuBlock; 9]>,
+            &'b mut [SudokuBlock],
+            impl FnMut(&'b mut [SudokuBlock; 9]) -> &'b mut [SudokuBlock],
+        >,
+        &'b mut SudokuBlock,
+    > {
+        let (start_row, start_col) = square_number_to_index(square_number);
+        SudokuContainer::new(
+            self.blocks[start_row..start_row + 3]
+                .iter_mut()
+                .flat_map(move |row| &mut row[start_col..start_col + 3]),
+        )
     }
 
     pub fn get_block_possible_numbers(&self, index: &BlockIndex) -> SudokuNumbers {
         let mut possible_numbers = SudokuNumbers::new_all();
 
-        for row_n in get_numbers(self.get_row(index.row)).get_numbers() {
-            possible_numbers.del_number(row_n);
-        }
-
-        for col_n in get_numbers(self.get_col(index.col)).get_numbers() {
-            possible_numbers.del_number(col_n);
-        }
-
-        for square_n in get_numbers(self.get_square(index.square_number())).get_numbers() {
-            possible_numbers.del_number(square_n);
-        }
+        possible_numbers.del_numbers(
+            self.get_row(index.row)
+                .get_numbers()
+                .into_iter()
+                .chain(self.get_col(index.col).get_numbers().into_iter())
+                .chain(
+                    self.get_square(index.square_number())
+                        .get_numbers()
+                        .into_iter(),
+                ),
+        );
 
         possible_numbers
     }
@@ -393,6 +484,14 @@ impl SudokuBoard {
     /// block based on [`SudokuBlockStatus::Fixed`] blocks values.
     pub fn update_possibilities(&mut self) {
         use SudokuNumber::*;
+
+        // self.get_blocks_mut()
+        //     .filter(|block| block.is_possibilities() || block.is_unresolved())
+        //     .for_each(|block| {
+        //         let possibles = self.get_block_possible_numbers(block.index());
+        //         block.status = SudokuBlockStatus::Possibilities(Possibilities::new(possibles));
+        //     });
+
         for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
             for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
                 let index = BlockIndex::new(row, col);
@@ -421,7 +520,7 @@ impl SudokuBoard {
         for block in self.get_blocks_mut().filter(|f| f.is_possibilities()) {
             let possibles = block.status.as_possibilities().unwrap();
             if possibles.numbers.count_numbers() == 1 {
-                let single_naked = possibles.numbers.get_numbers().next().unwrap();
+                let single_naked = possibles.numbers.iter().next().unwrap();
                 block.status = SudokuBlockStatus::Resolved(single_naked);
             }
         }
@@ -566,6 +665,12 @@ impl SudokuBoard {
     }
 }
 
+fn square_number_to_index(square_number: SudokuNumber) -> (usize, usize) {
+    let start_row = (square_number.to_index() / 3) * 3;
+    let start_col = (square_number.to_index() % 3) * 3;
+    (start_row, start_col)
+}
+
 pub fn find_mistake_in_container<'s>(
     iterator: impl Iterator<Item = &'s SudokuBlock>,
 ) -> HashMap<SudokuNumber, Vec<BlockIndex>> {
@@ -642,7 +747,7 @@ mod tests {
         board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
 
         let numbers = board.get_block_possible_numbers(&BlockIndex::new(One, One));
-        println!("{:?}", numbers.get_numbers().collect::<Vec<_>>());
+        println!("{:?}", numbers.iter().collect::<Vec<_>>());
     }
 
     #[test]
