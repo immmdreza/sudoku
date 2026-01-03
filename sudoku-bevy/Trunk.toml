@@ -1,0 +1,5 @@
+[build]
+# Trunk will copy ./assets -> dist/assets
+copy = [
+    { source = "assets", destination = "assets" }
+]

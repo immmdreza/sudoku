@@ -55,6 +55,12 @@ struct DefaultMaterials {
 }
 
 #[derive(Debug, Resource, Default)]
+struct DefaultAssets {
+    // Handles
+    default_font: Handle<Font>,
+}
+
+#[derive(Debug, Resource, Default)]
 struct Stats {
     /// Mistakes while resolving a block number
     mistakes: u32,
@@ -72,6 +78,7 @@ fn main() {
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SelectedBlock>()
         .init_resource::<DefaultMaterials>()
+        .init_resource::<DefaultAssets>()
         .init_resource::<Stats>()
         .insert_resource(ChangeSelectionTimer(Timer::new(
             Duration::from_millis(100),
@@ -128,6 +135,7 @@ fn setup(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut defaults: ResMut<DefaultMaterials>,
+    mut defaults_assets: ResMut<DefaultAssets>,
     asset_server: Res<AssetServer>,
 ) {
     let mut ortho = OrthographicProjection::default_2d();
@@ -179,12 +187,17 @@ fn setup(
 
     spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
 
+    #[cfg(target_arch = "wasm32")]
+    let font = asset_server.load("assets/fonts/FiraSans-Bold.ttf");
+    #[cfg(not(target_arch = "wasm32"))]
     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
+
+    defaults_assets.default_font = font;
 
     commands.spawn((
         Text2d::new("Sudoku".to_string()),
         TextFont {
-            font: font.clone(),
+            font: defaults_assets.default_font.clone(),
             font_size: 100.,
             ..default()
         },
@@ -200,7 +213,7 @@ fn setup(
         .spawn((
             Text2d::new("Mistakes: "),
             TextFont {
-                font: font.clone(),
+                font: defaults_assets.default_font.clone(),
                 font_size: 20.,
                 ..default()
             },
@@ -214,7 +227,7 @@ fn setup(
             parent.spawn((
                 TextSpan::new("0 (Numbers) / 0 (Possibilities)"),
                 TextFont {
-                    font: font.clone(),
+                    font: defaults_assets.default_font.clone(),
                     font_size: 20.,
                     ..default()
                 },
@@ -241,7 +254,7 @@ fn setup(
                 ))
                 .with_children(|builder| {
                     let text_font = TextFont {
-                        font: font.clone(),
+                        font: defaults_assets.default_font.clone(),
                         font_size: 17.,
                         ..default()
                     };
@@ -274,9 +287,9 @@ fn check_block_squares(query: Query<(Entity, &SquareIndex), With<Block>>) {
 
 fn update_board(
     mut commands: Commands,
-    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<DefaultMaterials>,
+    defaults_assets: Res<DefaultAssets>,
     mut board: ResMut<SudokuBoardResources>,
     mut blocks: Query<
         (
@@ -291,11 +304,10 @@ fn update_board(
 ) {
     let mut snapshot_should_update = false;
 
-    let font = asset_server.load("fonts/FiraSans-Bold.ttf");
     let text_justification = Justify::Center;
 
     let mut text_font = TextFont {
-        font: font.clone(),
+        font: defaults_assets.default_font.clone(),
         ..default()
     };
 
