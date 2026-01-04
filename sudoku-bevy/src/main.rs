@@ -74,12 +74,16 @@ struct MistakesCountText;
 
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, PanCamPlugin::default()))
+        .add_plugins((DefaultPlugins, MeshPickingPlugin, PanCamPlugin::default()))
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SelectedBlock>()
         .init_resource::<DefaultMaterials>()
         .init_resource::<DefaultAssets>()
         .init_resource::<Stats>()
+        .insert_resource(MeshPickingSettings {
+            require_markers: true,
+            ..Default::default()
+        })
         .insert_resource(ChangeSelectionTimer(Timer::new(
             Duration::from_millis(100),
             TimerMode::Repeating,
@@ -143,6 +147,7 @@ fn setup(
 
     commands.spawn((
         Camera2d,
+        MeshPickingCamera,
         Projection::Orthographic(ortho),
         PanCam {
             grab_buttons: vec![MouseButton::Left], // which buttons should drag the camera
@@ -826,7 +831,16 @@ fn spawn_sudoku_board(
                         spawn_info.clone(),
                         Some(master_index),
                     );
-                    builder.spawn((bundle, Block));
+                    builder.spawn((bundle, Block, Pickable::default())).observe(
+                        |over: On<Pointer<Click>>,
+                         indexes: Query<&SquareIndex>,
+                         mut selected: ResMut<SelectedBlock>| {
+                            if let Ok(index) = indexes.get(over.entity) {
+                                let index = index.actual_index();
+                                selected.current = index;
+                            }
+                        },
+                    );
                 }
             });
     }
