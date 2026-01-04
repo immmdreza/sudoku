@@ -831,18 +831,37 @@ fn spawn_sudoku_board(
                         spawn_info.clone(),
                         Some(master_index),
                     );
-                    builder.spawn((bundle, Block, Pickable::default())).observe(
-                        |over: On<Pointer<Click>>,
-                         indexes: Query<&SquareIndex>,
-                         mut selected: ResMut<SelectedBlock>| {
-                            if let Ok(index) = indexes.get(over.entity) {
-                                let index = index.actual_index();
-                                selected.current = index;
-                            }
-                        },
-                    );
+
+                    builder
+                        .spawn((bundle, Block, Pickable::default()))
+                        .observe(on_block_clicked);
                 }
             });
+    }
+}
+
+fn on_block_clicked(
+    over: On<Pointer<Click>>,
+    indexes: Query<&SquareIndex>,
+    mut selected: ResMut<SelectedBlock>,
+) {
+    if let Ok(index) = indexes.get(over.entity) {
+        let index = index.actual_index();
+        selected.current = index;
+
+        // if over.duration.as_secs_f32() >= 1.0 {
+        //     let block = board.current.get_block_mut(
+        //         &BlockIndex::from_index(index.1, index.0).unwrap(),
+        //     );
+
+        //     match &block.status {
+        //         SudokuBlockStatus::Resolved(_)
+        //         | SudokuBlockStatus::Possibilities(_) => {
+        //             block.status = SudokuBlockStatus::Unresolved;
+        //         }
+        //         _ => (),
+        //     }
+        // }
     }
 }
 
