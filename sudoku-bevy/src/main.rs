@@ -1,4 +1,7 @@
-use std::time::Duration;
+use std::{
+    fmt::{Display, Write},
+    time::Duration,
+};
 
 use bevy::{
     color::palettes::{
@@ -72,6 +75,118 @@ struct Stats {
 #[derive(Debug, Component)]
 struct MistakesCountText;
 
+#[derive(Debug, Clone, Copy)]
+enum Direction {
+    Up,
+    Down,
+    Left,
+    Right,
+}
+
+impl Display for Direction {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_char(match self {
+            Direction::Up => '↑',
+            Direction::Down => '↓',
+            Direction::Left => '←',
+            Direction::Right => '→',
+        })
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Strategy {
+    HiddenSingle,
+}
+
+impl Display for Strategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Strategy::HiddenSingle => f.write_char('H'),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum CommandType {
+    Number(SudokuNumber),
+    CalculatePossibilities,
+    ResolveNakedSingles,
+    Reset,
+    ChangeSelectionMode,
+    ClearBlock,
+    Direction(Direction),
+    Strategy(Strategy),
+}
+
+impl Display for CommandType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CommandType::Number(sudoku_number) => sudoku_number.to_u8().fmt(f),
+            CommandType::CalculatePossibilities => f.write_str("Space"),
+            CommandType::ResolveNakedSingles => f.write_str("ENTER"),
+            CommandType::Reset => f.write_char('R'),
+            CommandType::ChangeSelectionMode => f.write_char('M'),
+            CommandType::ClearBlock => f.write_char('C'),
+            CommandType::Direction(direction) => direction.fmt(f),
+            CommandType::Strategy(strategy) => strategy.fmt(f),
+        }
+    }
+}
+
+#[derive(Debug, Component)]
+struct HelperBlock {
+    command_type: CommandType,
+}
+
+impl HelperBlock {
+    fn new(command_type: CommandType) -> Self {
+        Self { command_type }
+    }
+}
+
+#[derive(Debug, Event)]
+struct GameInputs {
+    command_type: CommandType,
+}
+
+impl GameInputs {
+    fn new(command_type: CommandType) -> Self {
+        Self { command_type }
+    }
+}
+
+#[derive(Debug, Bundle)]
+struct TextBundle {
+    text: Text2d,
+    font: TextFont,
+    color: TextColor,
+    layout: TextLayout,
+    transform: Transform,
+}
+
+impl TextBundle {
+    fn new(
+        text: impl Into<String>,
+        font: impl Into<Handle<Font>>,
+        font_size: f32,
+        color: impl Into<Color>,
+        transform: Transform,
+    ) -> Self {
+        Self {
+            text: Text2d(text.into()),
+            font: TextFont {
+                font: font.into(),
+                font_size,
+                ..Default::default()
+            },
+            color: TextColor(color.into()),
+            layout: TextLayout::new_with_justify(Justify::Center),
+            transform,
+        }
+    }
+}
+
 fn main() {
     App::new()
         .add_plugins((DefaultPlugins, MeshPickingPlugin, PanCamPlugin::default()))
@@ -88,6 +203,7 @@ fn main() {
             Duration::from_millis(100),
             TimerMode::Repeating,
         )))
+        .add_observer(on_game_input)
         .add_systems(Startup, setup)
         .add_systems(
             PostStartup,
@@ -108,7 +224,7 @@ fn main() {
                 reset.run_if(input_just_pressed(KeyCode::KeyR)),
                 change_selection_mode.run_if(input_just_pressed(KeyCode::KeyM)),
                 manually_clear_block.run_if(input_just_pressed(KeyCode::KeyC)),
-                manually_update_block.run_if(
+                digit_1_to_9_clicked.run_if(
                     input_just_pressed(KeyCode::Digit1)
                         .or(input_just_pressed(KeyCode::Digit2))
                         .or(input_just_pressed(KeyCode::Digit3))
@@ -195,34 +311,21 @@ fn setup(
     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
     defaults_assets.default_font = font;
 
-    commands.spawn((
-        Text2d::new("Sudoku".to_string()),
-        TextFont {
-            font: defaults_assets.default_font.clone(),
-            font_size: 100.,
-            ..default()
-        },
-        TextColor(Color::from(WHITE)),
-        TextLayout::new(Justify::Center, LineBreak::WordBoundary),
-        Transform::default().with_translation(Vec3 {
-            y: 450.,
-            ..Default::default()
-        }),
+    commands.spawn(TextBundle::new(
+        "Sudoku",
+        defaults_assets.default_font.clone(),
+        100.,
+        WHITE,
+        Transform::from_translation(Vec3::default().with_y(450.)),
     ));
 
     commands
-        .spawn((
-            Text2d::new("Mistakes: "),
-            TextFont {
-                font: defaults_assets.default_font.clone(),
-                font_size: 20.,
-                ..default()
-            },
-            TextColor(Color::from(WHITE)),
-            Transform::default().with_translation(Vec3 {
-                y: 380.,
-                ..Default::default()
-            }),
+        .spawn(TextBundle::new(
+            "Mistakes: ",
+            defaults_assets.default_font.clone(),
+            20.,
+            WHITE,
+            Transform::from_translation(Vec3::default().with_y(380.)),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -233,7 +336,6 @@ fn setup(
                     ..default()
                 },
                 TextColor(Color::from(RED)),
-                // TextBackgroundColor(Color::from(WHITE)),
                 MistakesCountText,
             ));
         });
@@ -265,10 +367,190 @@ fn setup(
                         text_font,
                         TextColor(defaults.default_base_text_color),
                         TextLayout::new(Justify::Center, LineBreak::WordBoundary),
-                        // Wrap text in the rectangle
-                        // TextBounds::from(Vec2::new(300., 500.)),
                     ));
                 });
+        });
+
+    commands.spawn(TextBundle::new(
+        "Accessibility",
+        defaults_assets.default_font.clone(),
+        20.,
+        WHITE,
+        Transform::from_translation(Vec3::default().with_xy(vec2(420., 340.))),
+    ));
+
+    let spawn_info = SquareSpawnInfo {
+        width: 180.,
+        translation: vec2(420., 50.),
+        index: (0, 0),
+    };
+
+    // Helpers buttons
+    commands
+        .spawn((SquareBundle::new(
+            defaults.default_foundation_block_color.clone(),
+            &mut meshes,
+            spawn_info.clone(),
+            None,
+        ),))
+        .with_children(|builder| {
+            let width = spawn_info.width;
+            let master_index = spawn_info.index;
+
+            for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
+            {
+                let bundle = SquareBundle::new(
+                    defaults.default_block_color.clone(),
+                    &mut meshes,
+                    spawn_info.clone(),
+                    Some(master_index),
+                );
+
+                let number = (index + 1).try_into().unwrap();
+
+                builder
+                    .spawn((
+                        bundle,
+                        HelperBlock::new(CommandType::Number(number)),
+                        Pickable::default(),
+                    ))
+                    .with_child((
+                        Text2d::new(format!("{}", index + 1)),
+                        TextFont {
+                            font: defaults_assets.default_font.clone(),
+                            font_size: spawn_info.width,
+                            ..default()
+                        },
+                        TextColor(defaults.default_fixed_number_color),
+                        TextLayout::new_with_justify(Justify::Center),
+                    ))
+                    .observe(on_helper_block_clicked);
+            }
+        });
+
+    let spawn_info = SquareSpawnInfo {
+        width: 180.,
+        translation: vec2(420., 235.),
+        index: (0, 0),
+    };
+
+    commands
+        .spawn((SquareBundle::new(
+            defaults.default_foundation_block_color.clone(),
+            &mut meshes,
+            spawn_info.clone(),
+            None,
+        ),))
+        .with_children(|builder| {
+            let width = spawn_info.width;
+            let master_index = spawn_info.index;
+
+            let available_commands = [
+                CommandType::CalculatePossibilities,
+                CommandType::Direction(Direction::Left),
+                CommandType::ResolveNakedSingles,
+                CommandType::Direction(Direction::Up),
+                CommandType::Reset,
+                CommandType::Direction(Direction::Down),
+                CommandType::ChangeSelectionMode,
+                CommandType::Direction(Direction::Right),
+                CommandType::ClearBlock,
+            ];
+
+            for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
+            {
+                let bundle = SquareBundle::new(
+                    defaults.default_block_color.clone(),
+                    &mut meshes,
+                    spawn_info.clone(),
+                    Some(master_index),
+                );
+
+                let command_type = available_commands[index];
+                let command_type_text = command_type.to_string();
+                let char_count = command_type_text.chars().count();
+                let text_width =
+                    spawn_info.width / (if char_count == 1 { 1 } else { char_count - 1 }) as f32;
+
+                builder
+                    .spawn((bundle, HelperBlock::new(command_type), Pickable::default()))
+                    .with_child((
+                        Text2d::new(command_type_text),
+                        TextFont {
+                            font: defaults_assets.default_font.clone(),
+                            font_size: text_width,
+                            ..default()
+                        },
+                        TextColor(Color::from(
+                            if let CommandType::Direction(_) = &command_type {
+                                RED
+                            } else {
+                                BLACK
+                            },
+                        )),
+                        TextLayout::new_with_justify(Justify::Center),
+                    ))
+                    .observe(on_helper_block_clicked);
+            }
+        });
+
+    commands.spawn(TextBundle::new(
+        "Strategies",
+        defaults_assets.default_font.clone(),
+        20.,
+        WHITE,
+        Transform::from_translation(Vec3::default().with_xy(vec2(420., -60.))),
+    ));
+
+    // Strategies
+    let spawn_info = SquareSpawnInfo {
+        width: 180.,
+        translation: vec2(420., -165.),
+        index: (0, 0),
+    };
+
+    commands
+        .spawn((SquareBundle::new(
+            defaults.default_foundation_block_color.clone(),
+            &mut meshes,
+            spawn_info.clone(),
+            None,
+        ),))
+        .with_children(|builder| {
+            let width = spawn_info.width;
+            let master_index = spawn_info.index;
+
+            let strategies = [Strategy::HiddenSingle];
+
+            for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
+            {
+                if let Some(strategy) = strategies.get(index) {
+                    let bundle = SquareBundle::new(
+                        defaults.default_block_color.clone(),
+                        &mut meshes,
+                        spawn_info.clone(),
+                        Some(master_index),
+                    );
+
+                    builder
+                        .spawn((
+                            bundle,
+                            HelperBlock::new(CommandType::Strategy(*strategy)),
+                            Pickable::default(),
+                        ))
+                        .with_child((
+                            Text2d::new(strategy.to_string()),
+                            TextFont {
+                                font: defaults_assets.default_font.clone(),
+                                font_size: spawn_info.width,
+                                ..default()
+                            },
+                            TextColor(defaults.default_fixed_number_color),
+                            TextLayout::new_with_justify(Justify::Center),
+                        ))
+                        .observe(on_helper_block_clicked);
+                }
+            }
         });
 }
 
@@ -337,7 +619,6 @@ fn update_board(
 
                             let child = commands
                                 .spawn((
-                                    Block,
                                     Text2d::new(format!("{}", sudoku_number.to_u8())),
                                     text_font.clone(),
                                     TextColor(
@@ -404,7 +685,6 @@ fn update_board(
                                                     TextLayout::new_with_justify(
                                                         text_justification,
                                                     ),
-                                                    Possibilities,
                                                 ));
                                             });
                                     }
@@ -452,42 +732,26 @@ fn update_board(
 struct ChangeSelectionTimer(Timer);
 
 fn change_selected_block(
+    mut commands: Commands,
     time: Res<Time>,
     mut timer: ResMut<ChangeSelectionTimer>,
-    mut selected: ResMut<SelectedBlock>,
     keyboard_input: Res<ButtonInput<KeyCode>>,
 ) {
     if timer.0.tick(time.delta()).just_finished() {
         if keyboard_input.pressed(KeyCode::ArrowLeft) {
-            if selected.current.0 > 0 {
-                selected.current.0 -= 1;
-            } else {
-                selected.current.0 = 8;
-            }
+            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Left)));
         }
 
         if keyboard_input.pressed(KeyCode::ArrowRight) {
-            if selected.current.0 < 8 {
-                selected.current.0 += 1;
-            } else {
-                selected.current.0 = 0;
-            }
+            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Right)));
         }
 
         if keyboard_input.pressed(KeyCode::ArrowDown) {
-            if selected.current.1 < 8 {
-                selected.current.1 += 1;
-            } else {
-                selected.current.1 = 0;
-            }
+            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Down)));
         }
 
         if keyboard_input.pressed(KeyCode::ArrowUp) {
-            if selected.current.1 > 0 {
-                selected.current.1 -= 1;
-            } else {
-                selected.current.1 = 8;
-            }
+            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Up)));
         }
     }
 }
@@ -541,165 +805,69 @@ fn update_selected_block(
     }
 }
 
-fn update_possibilities(
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-) {
+fn update_possibilities(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::Space) {
-        println!("Updating possibilities.");
-        sudoku_board.current.update_possibilities();
+        commands.trigger(GameInputs::new(CommandType::CalculatePossibilities));
     }
 }
 
-fn engage_strategy(
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-) {
+fn engage_strategy(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::KeyH) {
-        println!("Engaging Hidden single Strategy.");
-        sudoku_board.current.engage_strategy(HiddenSingleStrategy);
+        commands.trigger(GameInputs::new(CommandType::Strategy(
+            Strategy::HiddenSingle,
+        )));
     }
 }
 
-fn resolve_satisfied(
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-) {
+fn resolve_satisfied(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::Enter) {
-        println!("Resolving satisfied blocks (Naked single).");
-        sudoku_board.current.resolve_satisfied_blocks();
+        commands.trigger(GameInputs::new(CommandType::ResolveNakedSingles));
     }
 }
 
-fn reset(
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-) {
+fn reset(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::KeyR) {
-        println!("Resetting.");
-        sudoku_board.current.reset();
+        commands.trigger(GameInputs::new(CommandType::Reset));
     }
 }
 
-fn change_selection_mode(
-    mut selected: ResMut<SelectedBlock>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-) {
+fn change_selection_mode(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::KeyM) {
-        println!("Changing mode.");
-        selected.mode = match selected.mode {
-            SelectionMode::Resolving => SelectionMode::Possibilities,
-            SelectionMode::Possibilities => SelectionMode::Resolving,
-        };
+        commands.trigger(GameInputs::new(CommandType::ChangeSelectionMode));
     }
 }
 
-fn manually_clear_block(
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    selected: Res<SelectedBlock>,
-) {
-    let block_index = BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
-    let block = sudoku_board.current.get_block_mut(&block_index);
-
-    match &block.status {
-        SudokuBlockStatus::Fixed(_) => (),
-        _ => {
-            if keyboard_input.just_pressed(KeyCode::KeyC) {
-                block.status = SudokuBlockStatus::Unresolved;
-
-                sudoku_board.current.mark_conflicts(&block_index, None);
-            }
-        }
+fn manually_clear_block(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
+    if keyboard_input.just_pressed(KeyCode::KeyC) {
+        commands.trigger(GameInputs::new(CommandType::ClearBlock));
     }
 }
 
-fn manually_update_block(
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    mut stats: ResMut<Stats>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-    selected: Res<SelectedBlock>,
-) {
-    let block_index = BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
-    let block = sudoku_board.current.get_block_mut(&block_index);
-
-    // let digit_map = |digit: KeyCode| match digit {
-    //     KeyCode::Digit1 => Some(SudokuNumber::One),
-    //     KeyCode::Digit2 => Some(SudokuNumber::Two),
-    //     KeyCode::Digit3 => Some(SudokuNumber::Three),
-    //     KeyCode::Digit4 => Some(SudokuNumber::Four),
-    //     KeyCode::Digit5 => Some(SudokuNumber::Five),
-    //     KeyCode::Digit6 => Some(SudokuNumber::Six),
-    //     KeyCode::Digit7 => Some(SudokuNumber::Seven),
-    //     KeyCode::Digit8 => Some(SudokuNumber::Eight),
-    //     KeyCode::Digit9 => Some(SudokuNumber::Nine),
-    //     _ => None,
-    // };
-
-    match &block.status {
-        SudokuBlockStatus::Fixed(_) => (),
-        _ => {
-            let update_result = if keyboard_input.just_pressed(KeyCode::Digit1) {
-                Some(_update_block(&selected, block, SudokuNumber::One))
-            } else if keyboard_input.just_pressed(KeyCode::Digit2) {
-                Some(_update_block(&selected, block, SudokuNumber::Two))
-            } else if keyboard_input.just_pressed(KeyCode::Digit3) {
-                Some(_update_block(&selected, block, SudokuNumber::Three))
-            } else if keyboard_input.just_pressed(KeyCode::Digit4) {
-                Some(_update_block(&selected, block, SudokuNumber::Four))
-            } else if keyboard_input.just_pressed(KeyCode::Digit5) {
-                Some(_update_block(&selected, block, SudokuNumber::Five))
-            } else if keyboard_input.just_pressed(KeyCode::Digit6) {
-                Some(_update_block(&selected, block, SudokuNumber::Six))
-            } else if keyboard_input.just_pressed(KeyCode::Digit7) {
-                Some(_update_block(&selected, block, SudokuNumber::Seven))
-            } else if keyboard_input.just_pressed(KeyCode::Digit8) {
-                Some(_update_block(&selected, block, SudokuNumber::Eight))
-            } else if keyboard_input.just_pressed(KeyCode::Digit9) {
-                Some(_update_block(&selected, block, SudokuNumber::Nine))
-            } else {
-                None
-            };
-
-            match update_result {
-                Some(result) => {
-                    match result {
-                        BlockUpdateResult::Cleared => {
-                            sudoku_board.current.mark_conflicts(&block_index, None);
-                        }
-                        BlockUpdateResult::Resolved => {
-                            sudoku_board.current.mark_conflicts(&block_index, None);
-
-                            let block = sudoku_board.current.get_block(&block_index);
-                            if block
-                                .conflicting
-                                .as_ref()
-                                .is_some_and(|f| matches!(f, Conflicting::Source))
-                            {
-                                // This is a mistake!
-                                stats.mistakes += 1;
-                                println!("This is a mistake!")
-                            }
-                        }
-                        BlockUpdateResult::Possible { number, is_cleared } => {
-                            sudoku_board
-                                .current
-                                .mark_conflicts(&block_index, Some((number, is_cleared)));
-
-                            let block = sudoku_board.current.get_block(&block_index);
-                            let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
-
-                            if poss.is_conflicting(number) {
-                                // This is also a mistake
-                                stats.possibility_mistakes += 1;
-                                println!("This is also a mistake!")
-                            }
-                        }
-                    }
-                }
-                None => (),
-            }
+fn digit_1_to_9_clicked(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
+    if let Some(sudoku_number) =
+        if keyboard_input.any_just_pressed([KeyCode::Digit1, KeyCode::Numpad1]) {
+            Some(SudokuNumber::One)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit2, KeyCode::Numpad2]) {
+            Some(SudokuNumber::Two)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit3, KeyCode::Numpad3]) {
+            Some(SudokuNumber::Three)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit4, KeyCode::Numpad4]) {
+            Some(SudokuNumber::Four)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit5, KeyCode::Numpad5]) {
+            Some(SudokuNumber::Five)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit6, KeyCode::Numpad6]) {
+            Some(SudokuNumber::Six)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit7, KeyCode::Numpad7]) {
+            Some(SudokuNumber::Seven)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit8, KeyCode::Numpad8]) {
+            Some(SudokuNumber::Eight)
+        } else if keyboard_input.any_just_pressed([KeyCode::Digit9, KeyCode::Numpad9]) {
+            Some(SudokuNumber::Nine)
+        } else {
+            None
         }
+    {
+        commands.trigger(GameInputs::new(CommandType::Number(sudoku_number)));
     }
 }
 
@@ -842,7 +1010,7 @@ fn spawn_sudoku_board(
 
 fn on_block_clicked(
     over: On<Pointer<Click>>,
-    indexes: Query<&SquareIndex>,
+    indexes: Query<&SquareIndex, With<Block>>,
     mut selected: ResMut<SelectedBlock>,
 ) {
     if let Ok(index) = indexes.get(over.entity) {
@@ -862,6 +1030,146 @@ fn on_block_clicked(
         //         _ => (),
         //     }
         // }
+    }
+}
+
+fn on_helper_block_clicked(
+    over: On<Pointer<Click>>,
+    mut commands: Commands,
+    indexes: Query<&HelperBlock>,
+) {
+    if let Ok(block) = indexes.get(over.entity) {
+        commands.trigger(GameInputs::new(block.command_type));
+    }
+}
+
+fn on_game_input(
+    input: On<GameInputs>,
+    mut sudoku_board: ResMut<SudokuBoardResources>,
+    mut stats: ResMut<Stats>,
+    mut selected: ResMut<SelectedBlock>,
+) {
+    match input.event().command_type {
+        CommandType::Number(sudoku_number) => {
+            let block_index =
+                BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
+            let block = sudoku_board.current.get_block_mut(&block_index);
+
+            match &block.status {
+                SudokuBlockStatus::Fixed(_) => (),
+                _ => {
+                    let update_result = Some(_update_block(&selected, block, sudoku_number));
+
+                    match update_result {
+                        Some(result) => {
+                            match result {
+                                BlockUpdateResult::Cleared => {
+                                    sudoku_board.current.mark_conflicts(&block_index, None);
+                                }
+                                BlockUpdateResult::Resolved => {
+                                    sudoku_board.current.mark_conflicts(&block_index, None);
+
+                                    let block = sudoku_board.current.get_block(&block_index);
+                                    if block
+                                        .conflicting
+                                        .as_ref()
+                                        .is_some_and(|f| matches!(f, Conflicting::Source))
+                                    {
+                                        // This is a mistake!
+                                        stats.mistakes += 1;
+                                        println!("This is a mistake!")
+                                    }
+                                }
+                                BlockUpdateResult::Possible { number, is_cleared } => {
+                                    sudoku_board
+                                        .current
+                                        .mark_conflicts(&block_index, Some((number, is_cleared)));
+
+                                    let block = sudoku_board.current.get_block(&block_index);
+                                    let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
+
+                                    if poss.is_conflicting(number) {
+                                        // This is also a mistake
+                                        stats.possibility_mistakes += 1;
+                                        println!("This is also a mistake!")
+                                    }
+                                }
+                            }
+                        }
+                        None => (),
+                    }
+                }
+            }
+        }
+        CommandType::CalculatePossibilities => {
+            println!("Updating possibilities.");
+            sudoku_board.current.update_possibilities();
+        }
+        CommandType::ResolveNakedSingles => {
+            println!("Resolving satisfied blocks (Naked single).");
+            sudoku_board.current.resolve_satisfied_blocks();
+        }
+        CommandType::Reset => {
+            println!("Resetting.");
+            sudoku_board.current.reset();
+        }
+        CommandType::ChangeSelectionMode => {
+            selected.mode = match selected.mode {
+                SelectionMode::Resolving => SelectionMode::Possibilities,
+                SelectionMode::Possibilities => SelectionMode::Resolving,
+            };
+        }
+        CommandType::ClearBlock => {
+            let block_index =
+                BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
+            let block = sudoku_board.current.get_block_mut(&block_index);
+
+            match &block.status {
+                SudokuBlockStatus::Fixed(_) => (),
+                _ => {
+                    block.status = SudokuBlockStatus::Unresolved;
+                    sudoku_board.current.mark_conflicts(&block_index, None);
+                }
+            }
+        }
+        CommandType::Direction(direction) => {
+            match direction {
+                Direction::Up => {
+                    if selected.current.1 > 0 {
+                        selected.current.1 -= 1;
+                    } else {
+                        selected.current.1 = 8;
+                    }
+                }
+                Direction::Down => {
+                    if selected.current.1 < 8 {
+                        selected.current.1 += 1;
+                    } else {
+                        selected.current.1 = 0;
+                    }
+                }
+                Direction::Left => {
+                    if selected.current.0 > 0 {
+                        selected.current.0 -= 1;
+                    } else {
+                        selected.current.0 = 8;
+                    }
+                }
+                Direction::Right => {
+                    if selected.current.0 < 8 {
+                        selected.current.0 += 1;
+                    } else {
+                        selected.current.0 = 0;
+                    }
+                }
+            };
+        }
+        CommandType::Strategy(strategy) => match strategy {
+            Strategy::HiddenSingle => {
+                println!("Engaging Hidden single Strategy.");
+                sudoku_board.current.engage_strategy(HiddenSingleStrategy);
+            }
+        },
     }
 }
 
