@@ -399,30 +399,25 @@ fn setup(
 
             for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
             {
-                let bundle = SquareBundle::new(
-                    defaults.default_block_color.clone(),
-                    &mut meshes,
-                    spawn_info.clone(),
-                    Some(master_index),
-                );
-
                 let number = (index + 1).try_into().unwrap();
 
                 builder
                     .spawn((
-                        bundle,
+                        SquareBundle::new(
+                            defaults.default_block_color.clone(),
+                            &mut meshes,
+                            spawn_info.clone(),
+                            Some(master_index),
+                        ),
                         HelperBlock::new(CommandType::Number(number)),
                         Pickable::default(),
-                    ))
-                    .with_child((
-                        Text2d::new(format!("{}", index + 1)),
-                        TextFont {
-                            font: defaults_assets.default_font.clone(),
-                            font_size: spawn_info.width,
-                            ..default()
-                        },
-                        TextColor(defaults.default_fixed_number_color),
-                        TextLayout::new_with_justify(Justify::Center),
+                        children![TextBundle::new(
+                            format!("{}", index + 1),
+                            defaults_assets.default_font.clone(),
+                            spawn_info.width,
+                            defaults.default_fixed_number_color,
+                            Default::default(),
+                        )],
                     ))
                     .observe(on_helper_block_clicked);
             }
@@ -473,22 +468,21 @@ fn setup(
                     spawn_info.width / (if char_count == 1 { 1 } else { char_count - 1 }) as f32;
 
                 builder
-                    .spawn((bundle, HelperBlock::new(command_type), Pickable::default()))
-                    .with_child((
-                        Text2d::new(command_type_text),
-                        TextFont {
-                            font: defaults_assets.default_font.clone(),
-                            font_size: text_width,
-                            ..default()
-                        },
-                        TextColor(Color::from(
+                    .spawn((
+                        bundle,
+                        HelperBlock::new(command_type),
+                        Pickable::default(),
+                        children![TextBundle::new(
+                            command_type_text,
+                            defaults_assets.default_font.clone(),
+                            text_width,
                             if let CommandType::Direction(_) = &command_type {
                                 RED
                             } else {
                                 BLACK
                             },
-                        )),
-                        TextLayout::new_with_justify(Justify::Center),
+                            Default::default(),
+                        )],
                     ))
                     .observe(on_helper_block_clicked);
             }
@@ -519,34 +513,28 @@ fn setup(
         .with_children(|builder| {
             let width = spawn_info.width;
             let master_index = spawn_info.index;
-
             let strategies = [Strategy::HiddenSingle];
 
             for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
             {
                 if let Some(strategy) = strategies.get(index) {
-                    let bundle = SquareBundle::new(
-                        defaults.default_block_color.clone(),
-                        &mut meshes,
-                        spawn_info.clone(),
-                        Some(master_index),
-                    );
-
                     builder
                         .spawn((
-                            bundle,
+                            SquareBundle::new(
+                                defaults.default_block_color.clone(),
+                                &mut meshes,
+                                spawn_info.clone(),
+                                Some(master_index),
+                            ),
                             HelperBlock::new(CommandType::Strategy(*strategy)),
                             Pickable::default(),
-                        ))
-                        .with_child((
-                            Text2d::new(strategy.to_string()),
-                            TextFont {
-                                font: defaults_assets.default_font.clone(),
-                                font_size: spawn_info.width,
-                                ..default()
-                            },
-                            TextColor(defaults.default_fixed_number_color),
-                            TextLayout::new_with_justify(Justify::Center),
+                            children![TextBundle::new(
+                                strategy.to_string(),
+                                defaults_assets.default_font.clone(),
+                                spawn_info.width,
+                                defaults.default_fixed_number_color,
+                                Default::default(),
+                            )],
                         ))
                         .observe(on_helper_block_clicked);
                 }
@@ -617,21 +605,18 @@ fn update_board(
                         | SudokuBlockStatus::Resolved(sudoku_number) => {
                             text_font.font_size = spawn_info.width;
 
-                            let child = commands
-                                .spawn((
-                                    Text2d::new(format!("{}", sudoku_number.to_u8())),
-                                    text_font.clone(),
-                                    TextColor(
-                                        if matches!(&block.status, SudokuBlockStatus::Fixed(_)) {
-                                            defaults.default_fixed_number_color
-                                        } else {
-                                            defaults.default_resolved_number_color
-                                        },
-                                    ),
-                                    TextLayout::new_with_justify(text_justification),
-                                ))
-                                .id();
-                            commands.entity(entity).add_child(child);
+                            commands.entity(entity).with_child((
+                                Text2d::new(format!("{}", sudoku_number.to_u8())),
+                                text_font.clone(),
+                                TextColor(
+                                    if matches!(&block.status, SudokuBlockStatus::Fixed(_)) {
+                                        defaults.default_fixed_number_color
+                                    } else {
+                                        defaults.default_resolved_number_color
+                                    },
+                                ),
+                                TextLayout::new_with_justify(text_justification),
+                            ));
                         }
                         SudokuBlockStatus::Possibilities(sudoku_numbers) => {
                             commands.entity(entity).with_children(|builder| {
@@ -657,36 +642,31 @@ fn update_board(
                                     {
                                         text_font.font_size = spawn_info.width;
 
-                                        builder
-                                            .spawn((
-                                                SquareBundle::new(
-                                                    if sudoku_numbers.is_conflicting(
-                                                        (*number).try_into().unwrap(),
-                                                    ) {
-                                                        defaults.conflicting_source_color.clone()
-                                                    } else {
-                                                        defaults
-                                                            .default_possibilities_block_color
-                                                            .clone()
-                                                    },
-                                                    &mut meshes,
-                                                    spawn_info,
-                                                    Some(master_index),
+                                        builder.spawn((
+                                            SquareBundle::new(
+                                                if sudoku_numbers
+                                                    .is_conflicting((*number).try_into().unwrap())
+                                                {
+                                                    defaults.conflicting_source_color.clone()
+                                                } else {
+                                                    defaults
+                                                        .default_possibilities_block_color
+                                                        .clone()
+                                                },
+                                                &mut meshes,
+                                                spawn_info,
+                                                Some(master_index),
+                                            ),
+                                            Possibilities,
+                                            children![(
+                                                Text2d::new(format!("{}", number)),
+                                                text_font.clone(),
+                                                TextColor(
+                                                    defaults.default_possibility_number_color,
                                                 ),
-                                                Possibilities,
-                                            ))
-                                            .with_children(|builder| {
-                                                builder.spawn((
-                                                    Text2d::new(format!("{}", number)),
-                                                    text_font.clone(),
-                                                    TextColor(
-                                                        defaults.default_possibility_number_color,
-                                                    ),
-                                                    TextLayout::new_with_justify(
-                                                        text_justification,
-                                                    ),
-                                                ));
-                                            });
+                                                TextLayout::new_with_justify(text_justification,),
+                                            )],
+                                        ));
                                     }
                                 }
                             });
