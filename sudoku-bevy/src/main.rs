@@ -19,7 +19,7 @@ use sudoku_solver::{
     strategies::hidden_single::HiddenSingleStrategy,
 };
 
-#[derive(Debug, Resource, Default)]
+#[derive(Debug, Resource, Default, PartialEq, Eq)]
 struct SudokuBoardResources {
     current: SudokuBoard,
     snapshot: SudokuBoard,
@@ -181,10 +181,17 @@ impl TextBundle {
                 ..Default::default()
             },
             color: TextColor(color.into()),
-            layout: TextLayout::new_with_justify(Justify::Center),
+            layout: TextLayout::new(Justify::Center, LineBreak::NoWrap),
             transform,
         }
     }
+}
+
+#[derive(Debug, States, Default, PartialEq, Eq, Hash, Clone)]
+enum GameStates {
+    #[default]
+    Playing,
+    FinishedVerified,
 }
 
 fn main() {
@@ -203,6 +210,7 @@ fn main() {
             Duration::from_millis(100),
             TimerMode::Repeating,
         )))
+        .init_state::<GameStates>()
         .add_observer(on_game_input)
         .add_systems(Startup, setup)
         .add_systems(
@@ -218,30 +226,38 @@ fn main() {
                         .or(input_pressed(KeyCode::ArrowLeft))
                         .or(input_pressed(KeyCode::ArrowRight)),
                 ),
-                engage_strategy.run_if(input_just_pressed(KeyCode::KeyH)),
-                update_possibilities.run_if(input_just_pressed(KeyCode::Space)),
-                resolve_satisfied.run_if(input_just_pressed(KeyCode::Enter)),
-                reset.run_if(input_just_pressed(KeyCode::KeyR)),
                 change_selection_mode.run_if(input_just_pressed(KeyCode::KeyM)),
-                manually_clear_block.run_if(input_just_pressed(KeyCode::KeyC)),
-                digit_1_to_9_clicked.run_if(
-                    input_just_pressed(KeyCode::Digit1)
-                        .or(input_just_pressed(KeyCode::Digit2))
-                        .or(input_just_pressed(KeyCode::Digit3))
-                        .or(input_just_pressed(KeyCode::Digit4))
-                        .or(input_just_pressed(KeyCode::Digit5))
-                        .or(input_just_pressed(KeyCode::Digit6))
-                        .or(input_just_pressed(KeyCode::Digit7))
-                        .or(input_just_pressed(KeyCode::Digit8))
-                        .or(input_just_pressed(KeyCode::Digit9)),
-                ),
+                (
+                    engage_strategy.run_if(input_just_pressed(KeyCode::KeyH)),
+                    update_possibilities.run_if(input_just_pressed(KeyCode::Space)),
+                    resolve_satisfied.run_if(input_just_pressed(KeyCode::Enter)),
+                    manually_clear_block.run_if(input_just_pressed(KeyCode::KeyC)),
+                    digit_1_to_9_clicked.run_if(
+                        input_just_pressed(KeyCode::Digit1)
+                            .or(input_just_pressed(KeyCode::Digit2))
+                            .or(input_just_pressed(KeyCode::Digit3))
+                            .or(input_just_pressed(KeyCode::Digit4))
+                            .or(input_just_pressed(KeyCode::Digit5))
+                            .or(input_just_pressed(KeyCode::Digit6))
+                            .or(input_just_pressed(KeyCode::Digit7))
+                            .or(input_just_pressed(KeyCode::Digit8))
+                            .or(input_just_pressed(KeyCode::Digit9)),
+                    ),
+                )
+                    .run_if(in_state(GameStates::Playing)),
+                reset.run_if(input_just_pressed(KeyCode::KeyR)),
             ),
         )
         .add_systems(
             PostUpdate,
             (
                 update_selected_block.run_if(resource_changed::<SelectedBlock>),
-                update_board.run_if(resource_changed::<SudokuBoardResources>),
+                (
+                    update_board,
+                    final_verification.run_if(in_state(GameStates::Playing)),
+                )
+                    .chain()
+                    .run_if(resource_changed::<SudokuBoardResources>),
                 update_mistakes_text.run_if(resource_changed::<Stats>),
             )
                 .chain(),
@@ -708,6 +724,23 @@ fn update_board(
     }
 }
 
+fn final_verification(mut commands: Commands, mut board: ResMut<SudokuBoardResources>) {
+    if board
+        .current
+        .get_blocks()
+        .filter(|f| f.is_unresolved() || f.is_possibilities())
+        .count()
+        == 0
+    {
+        if board.current.verify_board() {
+            commands.set_state(GameStates::FinishedVerified);
+            println!("Sudoku solved successfully!");
+        } else {
+            println!("Sudoku has mistakes!");
+        }
+    }
+}
+
 #[derive(Resource)]
 struct ChangeSelectionTimer(Timer);
 
@@ -808,6 +841,7 @@ fn resolve_satisfied(mut commands: Commands, keyboard_input: Res<ButtonInput<Key
 fn reset(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::KeyR) {
         commands.trigger(GameInputs::new(CommandType::Reset));
+        commands.set_state(GameStates::Playing);
     }
 }
 

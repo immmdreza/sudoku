@@ -100,7 +100,7 @@ impl Conflicting {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SudokuBlock {
     index: BlockIndex,
     pub conflicting: Option<Conflicting>,
@@ -281,7 +281,7 @@ where
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SudokuBoard {
     blocks: [[SudokuBlock; 9]; 9],
 }
@@ -525,7 +525,9 @@ impl SudokuBoard {
             }
         }
 
-        self.update_possibilities();
+        if self.verify_board() {
+            self.update_possibilities();
+        }
     }
 
     pub fn reset(&mut self) {
@@ -567,20 +569,16 @@ impl SudokuBoard {
         &mut self,
         index: &BlockIndex,
         possibility_number_info: Option<(SudokuNumber, bool)>,
-    ) {
+    ) -> bool {
         let block_status = &self.get_block(index).status;
 
         match block_status {
-            SudokuBlockStatus::Unresolved => {
-                self.mark_conflicts_unresolved(index);
-            }
-            SudokuBlockStatus::Resolved(_) => {
-                self.mark_conflicts_resolved(index);
-            }
+            SudokuBlockStatus::Unresolved => self.mark_conflicts_unresolved(index),
+            SudokuBlockStatus::Resolved(_) => self.mark_conflicts_resolved(index),
             SudokuBlockStatus::Possibilities(_) => {
-                self.mark_conflicts_possibilities(index, possibility_number_info);
+                self.mark_conflicts_possibilities(index, possibility_number_info)
             }
-            SudokuBlockStatus::Fixed(_) => (),
+            SudokuBlockStatus::Fixed(_) => true,
         }
     }
 
@@ -588,11 +586,30 @@ impl SudokuBoard {
         &mut self,
         index: &BlockIndex,
         possibility_number_info: Option<(SudokuNumber, bool)>,
-    ) {
+    ) -> bool {
         if let Some((pos, is_cleared)) = possibility_number_info {
             let mut similar = vec![];
 
             if !is_cleared {
+                if self
+                    .get_block(index)
+                    .status
+                    .as_possibilities()
+                    .unwrap()
+                    .numbers
+                    .count_numbers()
+                    == 1
+                {
+                    // Clean up previous conflicts
+                    self.get_blocks_mut()
+                        .filter(|f| {
+                            f.conflicting
+                                .as_ref()
+                                .is_some_and(|conf| conf.is_affected_by_and(|f| f == index))
+                        })
+                        .for_each(|f| f.conflicting = None);
+                }
+
                 if let Some(mistakes) = self.find_mistakes(index, pos) {
                     similar = mistakes;
                 }
@@ -610,6 +627,7 @@ impl SudokuBoard {
                         number: pos,
                     });
                 }
+                false
             } else {
                 let block = self.get_block_mut(index);
                 let poss = block.status.as_possibilities_mut().unwrap();
@@ -624,11 +642,23 @@ impl SudokuBoard {
                         })
                     })
                     .for_each(|f| f.conflicting = None);
+                true
             }
+        } else {
+            true
         }
     }
 
-    fn mark_conflicts_resolved(&mut self, index: &BlockIndex) {
+    fn mark_conflicts_resolved(&mut self, index: &BlockIndex) -> bool {
+        // Clean up previous conflicts
+        self.get_blocks_mut()
+            .filter(|f| {
+                f.conflicting
+                    .as_ref()
+                    .is_some_and(|conf| conf.is_affected_by_and(|f| f == index))
+            })
+            .for_each(|f| f.conflicting = None);
+
         if let Some(affected_indexes) = self.find_resolved_block_mistakes(index) {
             self.get_block_mut(index).conflicting = Some(Conflicting::Source);
             for affected in affected_indexes {
@@ -639,19 +669,14 @@ impl SudokuBoard {
                 self.get_block_mut(&affected).conflicting =
                     Some(Conflicting::AffectedBy(index.clone()));
             }
+            false
         } else {
             self.get_block_mut(index).conflicting = None;
-            self.get_blocks_mut()
-                .filter(|f| {
-                    f.conflicting
-                        .as_ref()
-                        .is_some_and(|conf| conf.is_affected_by_and(|f| f == index))
-                })
-                .for_each(|f| f.conflicting = None);
+            true
         }
     }
 
-    fn mark_conflicts_unresolved(&mut self, index: &BlockIndex) {
+    fn mark_conflicts_unresolved(&mut self, index: &BlockIndex) -> bool {
         self.get_block_mut(index).conflicting = None;
         self.get_blocks_mut()
             .filter(|f| {
@@ -662,9 +687,29 @@ impl SudokuBoard {
                 })
             })
             .for_each(|f| f.conflicting = None);
+        true
     }
 
-    fn verify_board(&mut self) {}
+    pub fn verify_board(&mut self) -> bool {
+        use SudokuNumber::*;
+
+        let mut verified = true;
+        for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
+            for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
+                let index = BlockIndex::new(row, col);
+                let block = self.get_block(&index);
+                if !match &block.status {
+                    SudokuBlockStatus::Resolved(_) => self.mark_conflicts_resolved(&index),
+                    SudokuBlockStatus::Unresolved => self.mark_conflicts_unresolved(&index),
+                    _ => true,
+                } {
+                    verified = false;
+                }
+            }
+        }
+
+        verified
+    }
 }
 
 fn square_number_to_index(square_number: SudokuNumber) -> (usize, usize) {
@@ -697,9 +742,13 @@ pub fn find_similar_in_container<'s>(
     ignore_index: Option<&BlockIndex>,
 ) -> impl Iterator<Item = BlockIndex> {
     iterator
-        .filter(|f| f.is_fixed())
+        .filter(|f| f.is_fixed() || f.is_resolved())
         .filter(move |f| ignore_index.is_some_and(|g| f.index != *g))
-        .filter(move |f| *f.status.as_fixed().unwrap() == number)
+        .filter(move |f| match f.status {
+            SudokuBlockStatus::Fixed(sudoku_number)
+            | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number == number,
+            _ => false,
+        })
         .map(|f| f.index.clone())
 }
 
