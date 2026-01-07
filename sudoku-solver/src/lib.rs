@@ -374,6 +374,12 @@ impl SudokuBoard {
         board
     }
 
+    pub fn from_u8(numbers: [[Option<u8>; 9]; 9]) -> Self {
+        let mut board = Self::default();
+        board.fill_board_u8(numbers).unwrap();
+        board
+    }
+
     pub fn get_block(&self, index: &BlockIndex) -> &SudokuBlock {
         let (row, col) = index.actual_indexes();
         &self.blocks[row][col]

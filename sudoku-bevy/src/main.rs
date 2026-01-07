@@ -335,7 +335,7 @@ fn setup(
 
     let board = &mut sudoku_board.0;
 
-    board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
+    board.fill_board_u8(sudoku_samples::easy::SECOND).unwrap();
 
     defaults.default_block_color = materials.add(Color::from(YELLOW));
     defaults.default_solved_block_color = materials.add(Color::from(GREEN_400));
