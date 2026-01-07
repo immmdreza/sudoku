@@ -1,0 +1,71 @@
+name: Build and Release Native Binaries
+
+on:
+  push:
+    tags:
+      - "v*.*.*"    # Triggers on version tags like v1.2.3
+
+jobs:
+  build-windows:
+    name: Build for Windows
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+      - name: Build sudoku-bevy (Windows exe, no dynamic linking)
+        run: cargo build --release --manifest-path sudoku-bevy/Cargo.toml --no-default-features
+      - name: Prepare binary
+        run: |
+          mkdir output
+          cp target/release/sudoku-bevy.exe output/
+      - name: Zip binary
+        run: Compress-Archive -Path output/sudoku-bevy.exe -DestinationPath sudoku-bevy-windows.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sudoku-bevy-windows
+          path: sudoku-bevy-windows.zip
+
+  build-linux:
+    name: Build for Linux
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+      - name: Install build dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libx11-dev libasound2-dev libudev-dev libxcb1-dev libwayland-dev libxkbcommon-dev
+      - name: Build sudoku-bevy (Linux exe, no dynamic linking)
+        run: cargo build --release --manifest-path sudoku-bevy/Cargo.toml --no-default-features
+      - name: Prepare binary
+        run: |
+          mkdir output
+          cp target/release/sudoku-bevy output/
+      - name: Zip binary
+        run: zip -j sudoku-bevy-linux.zip output/sudoku-bevy
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sudoku-bevy-linux
+          path: sudoku-bevy-linux.zip
+
+  release:
+    name: Create GitHub Release
+    needs: [build-windows, build-linux]
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: sudoku-bevy-windows
+      - uses: actions/download-artifact@v4
+        with:
+          name: sudoku-bevy-linux
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            sudoku-bevy-windows.zip
+            sudoku-bevy-linux.zip
