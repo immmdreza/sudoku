@@ -7,10 +7,11 @@ use bevy::{
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, RED, WHITE, YELLOW},
-        tailwind::{BLUE_200, GRAY_600, RED_400, YELLOW_400},
+        tailwind::{BLUE_200, GRAY_600, GREEN_400, RED_400, YELLOW_400},
     },
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
+    window::{PresentMode, WindowTheme},
 };
 use sudoku_bevy::pancam::{DirectionKeys, PanCam, PanCamPlugin};
 use sudoku_solver::{
@@ -19,11 +20,13 @@ use sudoku_solver::{
     strategies::hidden_single::HiddenSingleStrategy,
 };
 
-#[derive(Debug, Resource, Default, PartialEq, Eq)]
-struct SudokuBoardResources {
-    current: SudokuBoard,
-    snapshot: SudokuBoard,
-}
+use SudokuNumber::*;
+
+#[derive(Debug, Resource, Default, PartialEq, Eq, Deref, DerefMut)]
+struct SudokuBoardResources(SudokuBoard);
+
+#[derive(Debug, Resource, Default, PartialEq, Eq, Deref, DerefMut)]
+struct SudokuBoardSnapshotResources(SudokuBoard);
 
 #[derive(Debug, Default)]
 enum SelectionMode {
@@ -44,6 +47,7 @@ struct DefaultMaterials {
     default_foundation_block_color: Handle<ColorMaterial>,
     default_possibilities_block_color: Handle<ColorMaterial>,
     default_block_color: Handle<ColorMaterial>,
+    default_solved_block_color: Handle<ColorMaterial>,
     selected_resolving_block_color: Handle<ColorMaterial>,
     selected_possibilities_block_color: Handle<ColorMaterial>,
 
@@ -194,10 +198,34 @@ enum GameStates {
     FinishedVerified,
 }
 
+#[derive(Debug, Component)]
+struct HelpText;
+
+const DEFAULT_HELP_TEXT: &'static str = "Use 'Space' to update possible values, 'Enter' to resolve blocks,\n'R' to reset, 'M' to change selection mode, 'C' to clear block,\n1 to 9 to set number and 'H' to engage Hidden single strategy.";
+
 fn main() {
     App::new()
-        .add_plugins((DefaultPlugins, MeshPickingPlugin, PanCamPlugin::default()))
+        .add_plugins((
+            DefaultPlugins.set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Let's play Sudoku".into(),
+                    name: Some("sudoku.bevy.app".into()),
+                    resolution: (1000, 720).into(),
+                    present_mode: PresentMode::AutoVsync,
+                    // Tells Wasm to resize the window according to the available canvas
+                    fit_canvas_to_parent: true,
+                    // Tells Wasm not to override default event handling, like F5, Ctrl+R etc.
+                    prevent_default_event_handling: false,
+                    window_theme: Some(WindowTheme::Dark),
+                    ..Default::default()
+                }),
+                ..Default::default()
+            }),
+            MeshPickingPlugin,
+            PanCamPlugin::default(),
+        ))
         .init_resource::<SudokuBoardResources>()
+        .init_resource::<SudokuBoardSnapshotResources>()
         .init_resource::<SelectedBlock>()
         .init_resource::<DefaultMaterials>()
         .init_resource::<DefaultAssets>()
@@ -304,11 +332,12 @@ fn setup(
     let width = 630.;
     let offset = 5.;
 
-    let board = &mut sudoku_board.current;
+    let board = &mut sudoku_board.0;
 
     board.fill_board_u8(sudoku_samples::easy::FIRST).unwrap();
 
     defaults.default_block_color = materials.add(Color::from(YELLOW));
+    defaults.default_solved_block_color = materials.add(Color::from(GREEN_400));
     defaults.selected_resolving_block_color = materials.add(Color::from(YELLOW_400));
     defaults.selected_possibilities_block_color = materials.add(Color::from(BLUE_200));
     defaults.default_foundation_block_color = materials.add(Color::from(PURPLE));
@@ -379,10 +408,11 @@ fn setup(
                     };
 
                     builder.spawn((
-                        Text2d::new("Use 'Space' to update possible values, 'Enter' to resolve blocks,\n'R' to reset, 'M' to change selection mode, 'C' to clear block,\n1 to 9 to set number and 'H' to engage Hidden single strategy.".to_string()),
+                        Text2d::new(DEFAULT_HELP_TEXT.to_string()),
                         text_font,
                         TextColor(defaults.default_base_text_color),
-                        TextLayout::new(Justify::Center, LineBreak::WordBoundary),
+                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                        HelpText,
                     ));
                 });
         });
@@ -577,7 +607,8 @@ fn update_board(
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
-    mut board: ResMut<SudokuBoardResources>,
+    board: Res<SudokuBoardResources>,
+    mut snapshot: ResMut<SudokuBoardSnapshotResources>,
     mut blocks: Query<
         (
             Entity,
@@ -589,24 +620,27 @@ fn update_board(
     >,
     selected: Res<SelectedBlock>,
 ) {
+    #[cfg(debug_assertions)]
+    println!("Board needs update!");
+
     let mut snapshot_should_update = false;
-
     let text_justification = Justify::Center;
-
     let mut text_font = TextFont {
         font: defaults_assets.default_font.clone(),
         ..default()
     };
 
-    use SudokuNumber::*;
     for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
         for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
             let block_index = BlockIndex::new(row, col);
-            let block = board.current.get_block(&block_index);
-            let snapshot_block = board.snapshot.get_block(&block_index);
+            let block = board.get_block(&block_index);
+            let snapshot_block = snapshot.get_block(&block_index);
             let (j, i) = block_index.actual_indexes();
 
             if block.status != snapshot_block.status {
+                #[cfg(debug_assertions)]
+                println!("Block {:?} seems changed.", &block_index);
+
                 snapshot_should_update = true;
 
                 if let Some((entity, spawn_info, _, _)) = blocks.iter().find(|(_, _, index, _)| {
@@ -690,6 +724,7 @@ fn update_board(
                     }
                 }
 
+                #[cfg(debug_assertions)]
                 println!("Updated ({:?}, {:?})", row, col);
             }
 
@@ -720,22 +755,44 @@ fn update_board(
     }
 
     if snapshot_should_update {
-        board.snapshot = board.current.clone();
+        snapshot.0 = board.0.clone();
     }
 }
 
-fn final_verification(mut commands: Commands, mut board: ResMut<SudokuBoardResources>) {
+fn final_verification(
+    mut commands: Commands,
+    board: Res<SudokuBoardResources>,
+    defaults: Res<DefaultMaterials>,
+    selected: Res<SelectedBlock>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+    mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
+) {
     if board
-        .current
         .get_blocks()
         .filter(|f| f.is_unresolved() || f.is_possibilities())
         .count()
         == 0
     {
-        if board.current.verify_board() {
+        if board.verify_board() {
             commands.set_state(GameStates::FinishedVerified);
+
+            help_text.0 = format!("The sudoku board solved successfully!\nYou can try resetting.");
+            board.get_blocks().filter_resolved().for_each(|f| {
+                if let Some((_, mut mesh)) = blocks.iter_mut().find(|(si, _)| {
+                    let index = si.actual_index();
+                    let my_index = f.index().actual_indexes();
+
+                    // Don't change selected block color.
+                    (selected.current != index) && (index.0 == my_index.1 && index.1 == my_index.0)
+                }) {
+                    mesh.0 = defaults.default_solved_block_color.clone();
+                }
+            });
+
+            #[cfg(debug_assertions)]
             println!("Sudoku solved successfully!");
         } else {
+            #[cfg(debug_assertions)]
             println!("Sudoku has mistakes!");
         }
     }
@@ -773,6 +830,7 @@ fn update_selected_block(
     defaults: Res<DefaultMaterials>,
     selected: Res<SelectedBlock>,
     board: Res<SudokuBoardResources>,
+    game_state: Res<State<GameStates>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
     if let Some((_, mut material)) = blocks.iter_mut().find(|(index, _)| {
@@ -794,9 +852,7 @@ fn update_selected_block(
         if material.0.id() == defaults.selected_possibilities_block_color.id()
             || material.0.id() == defaults.selected_resolving_block_color.id()
         {
-            let block = board
-                .current
-                .get_block(&BlockIndex::from_index(index.1, index.0).unwrap());
+            let block = board.get_block(&BlockIndex::from_index(index.1, index.0).unwrap());
 
             match &block.conflicting {
                 Some(conflicting) => match conflicting {
@@ -810,9 +866,18 @@ fn update_selected_block(
                         material.0 = defaults.conflicting_affected_color.clone();
                     }
                 },
-                None => {
-                    material.0 = defaults.default_block_color.clone();
-                }
+                None => match game_state.get() {
+                    GameStates::Playing => {
+                        material.0 = defaults.default_block_color.clone();
+                    }
+                    GameStates::FinishedVerified => {
+                        if block.is_resolved() {
+                            material.0 = defaults.default_solved_block_color.clone();
+                        } else {
+                            material.0 = defaults.default_block_color.clone();
+                        }
+                    }
+                },
             }
         }
     }
@@ -841,7 +906,6 @@ fn resolve_satisfied(mut commands: Commands, keyboard_input: Res<ButtonInput<Key
 fn reset(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::KeyR) {
         commands.trigger(GameInputs::new(CommandType::Reset));
-        commands.set_state(GameStates::Playing);
     }
 }
 
@@ -1059,15 +1123,19 @@ fn on_helper_block_clicked(
 
 fn on_game_input(
     input: On<GameInputs>,
-    mut sudoku_board: ResMut<SudokuBoardResources>,
+    defaults: Res<DefaultMaterials>,
+    mut commands: Commands,
+    mut board: ResMut<SudokuBoardResources>,
     mut stats: ResMut<Stats>,
     mut selected: ResMut<SelectedBlock>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+    mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
     match input.event().command_type {
         CommandType::Number(sudoku_number) => {
             let block_index =
                 BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
-            let block = sudoku_board.current.get_block_mut(&block_index);
+            let block = board.get_block_mut(&block_index);
 
             match &block.status {
                 SudokuBlockStatus::Fixed(_) => (),
@@ -1078,12 +1146,12 @@ fn on_game_input(
                         Some(result) => {
                             match result {
                                 BlockUpdateResult::Cleared => {
-                                    sudoku_board.current.mark_conflicts(&block_index, None);
+                                    board.mark_conflicts(&block_index, None);
                                 }
                                 BlockUpdateResult::Resolved => {
-                                    sudoku_board.current.mark_conflicts(&block_index, None);
+                                    board.mark_conflicts(&block_index, None);
 
-                                    let block = sudoku_board.current.get_block(&block_index);
+                                    let block = board.get_block(&block_index);
                                     if block
                                         .conflicting
                                         .as_ref()
@@ -1091,20 +1159,20 @@ fn on_game_input(
                                     {
                                         // This is a mistake!
                                         stats.mistakes += 1;
+                                        #[cfg(debug_assertions)]
                                         println!("This is a mistake!")
                                     }
                                 }
                                 BlockUpdateResult::Possible { number, is_cleared } => {
-                                    sudoku_board
-                                        .current
-                                        .mark_conflicts(&block_index, Some((number, is_cleared)));
+                                    board.mark_conflicts(&block_index, Some((number, is_cleared)));
 
-                                    let block = sudoku_board.current.get_block(&block_index);
+                                    let block = board.get_block(&block_index);
                                     let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
 
                                     if poss.is_conflicting(number) {
                                         // This is also a mistake
                                         stats.possibility_mistakes += 1;
+                                        #[cfg(debug_assertions)]
                                         println!("This is also a mistake!")
                                     }
                                 }
@@ -1116,16 +1184,31 @@ fn on_game_input(
             }
         }
         CommandType::CalculatePossibilities => {
+            #[cfg(debug_assertions)]
             println!("Updating possibilities.");
-            sudoku_board.current.update_possibilities();
+            board.update_possibilities();
         }
         CommandType::ResolveNakedSingles => {
+            #[cfg(debug_assertions)]
             println!("Resolving satisfied blocks (Naked single).");
-            sudoku_board.current.resolve_satisfied_blocks();
+            board.resolve_satisfied_blocks();
         }
         CommandType::Reset => {
+            #[cfg(debug_assertions)]
             println!("Resetting.");
-            sudoku_board.current.reset();
+            board.reset();
+            commands.set_state(GameStates::Playing);
+
+            help_text.0 = DEFAULT_HELP_TEXT.to_string();
+            board.get_blocks().filter_unresolved().for_each(|f| {
+                if let Some((_, mut mesh)) = blocks.iter_mut().find(|(si, _)| {
+                    let index = si.actual_index();
+                    let my_index = f.index().actual_indexes();
+                    index.0 == my_index.1 && index.1 == my_index.0
+                }) {
+                    mesh.0 = defaults.default_block_color.clone();
+                }
+            });
         }
         CommandType::ChangeSelectionMode => {
             selected.mode = match selected.mode {
@@ -1136,13 +1219,13 @@ fn on_game_input(
         CommandType::ClearBlock => {
             let block_index =
                 BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
-            let block = sudoku_board.current.get_block_mut(&block_index);
+            let block = board.get_block_mut(&block_index);
 
             match &block.status {
                 SudokuBlockStatus::Fixed(_) => (),
                 _ => {
                     block.status = SudokuBlockStatus::Unresolved;
-                    sudoku_board.current.mark_conflicts(&block_index, None);
+                    board.mark_conflicts(&block_index, None);
                 }
             }
         }
@@ -1180,8 +1263,9 @@ fn on_game_input(
         }
         CommandType::Strategy(strategy) => match strategy {
             Strategy::HiddenSingle => {
+                #[cfg(debug_assertions)]
                 println!("Engaging Hidden single Strategy.");
-                sudoku_board.current.engage_strategy(HiddenSingleStrategy);
+                board.engage_strategy(HiddenSingleStrategy);
             }
         },
     }

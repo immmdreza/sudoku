@@ -5,6 +5,8 @@ use crate::{
     strategies::SudokuSolvingStrategy,
 };
 
+use SudokuNumber::*;
+
 pub mod numbers;
 pub mod strategies;
 
@@ -268,6 +270,30 @@ where
     pub fn get_numbers(self) -> SudokuNumbers {
         get_numbers(self)
     }
+
+    pub fn filter_resolved(
+        self,
+    ) -> SudokuContainer<
+        std::iter::Filter<
+            SudokuContainer<T, &'b SudokuBlock>,
+            impl FnMut(&&'b SudokuBlock) -> bool,
+        >,
+        &'b SudokuBlock,
+    > {
+        SudokuContainer::new(self.filter(|f| f.is_resolved()))
+    }
+
+    pub fn filter_unresolved(
+        self,
+    ) -> SudokuContainer<
+        std::iter::Filter<
+            SudokuContainer<T, &'b SudokuBlock>,
+            impl FnMut(&&'b SudokuBlock) -> bool,
+        >,
+        &'b SudokuBlock,
+    > {
+        SudokuContainer::new(self.filter(|f| f.is_unresolved()))
+    }
 }
 
 impl<T, Item> Iterator for SudokuContainer<T, Item>
@@ -288,8 +314,6 @@ pub struct SudokuBoard {
 
 impl Default for SudokuBoard {
     fn default() -> Self {
-        use SudokuNumber::*;
-
         let blocks = [One, Two, Three, Four, Five, Six, Seven, Eight, Nine]
             .iter()
             .map(|row| {
@@ -525,7 +549,7 @@ impl SudokuBoard {
             }
         }
 
-        if self.verify_board() {
+        if self.mark_all_conflicts() {
             self.update_possibilities();
         }
     }
@@ -540,14 +564,11 @@ impl SudokuBoard {
         }
     }
 
-    fn find_mistakes(&self, index: &BlockIndex, resolved: SudokuNumber) -> Option<Vec<BlockIndex>> {
-        let row_m = find_similar_in_container(resolved, self.get_row(index.row), Some(index));
-        let col_m = find_similar_in_container(resolved, self.get_col(index.col), Some(index));
-        let square_m = find_similar_in_container(
-            resolved,
-            self.get_square(index.square_number()),
-            Some(index),
-        );
+    fn find_mistakes(&self, index: &BlockIndex, number: SudokuNumber) -> Option<Vec<BlockIndex>> {
+        let row_m = find_similar_in_container(number, self.get_row(index.row), Some(index));
+        let col_m = find_similar_in_container(number, self.get_col(index.col), Some(index));
+        let square_m =
+            find_similar_in_container(number, self.get_square(index.square_number()), Some(index));
 
         let mut mistakes = row_m.chain(col_m).chain(square_m).collect::<Vec<_>>();
         mistakes.dedup();
@@ -651,13 +672,7 @@ impl SudokuBoard {
 
     fn mark_conflicts_resolved(&mut self, index: &BlockIndex) -> bool {
         // Clean up previous conflicts
-        self.get_blocks_mut()
-            .filter(|f| {
-                f.conflicting
-                    .as_ref()
-                    .is_some_and(|conf| conf.is_affected_by_and(|f| f == index))
-            })
-            .for_each(|f| f.conflicting = None);
+        self.clear_all_previous_conflicts(index);
 
         if let Some(affected_indexes) = self.find_resolved_block_mistakes(index) {
             self.get_block_mut(index).conflicting = Some(Conflicting::Source);
@@ -678,6 +693,11 @@ impl SudokuBoard {
 
     fn mark_conflicts_unresolved(&mut self, index: &BlockIndex) -> bool {
         self.get_block_mut(index).conflicting = None;
+        self.clear_all_previous_conflicts(index);
+        true
+    }
+
+    fn clear_all_previous_conflicts(&mut self, index: &BlockIndex) {
         self.get_blocks_mut()
             .filter(|f| {
                 f.conflicting.as_ref().is_some_and(|conf| {
@@ -687,10 +707,9 @@ impl SudokuBoard {
                 })
             })
             .for_each(|f| f.conflicting = None);
-        true
     }
 
-    pub fn verify_board(&mut self) -> bool {
+    pub fn mark_all_conflicts(&mut self) -> bool {
         use SudokuNumber::*;
 
         let mut verified = true;
@@ -709,6 +728,23 @@ impl SudokuBoard {
         }
 
         verified
+    }
+
+    pub fn verify_board(&self) -> bool {
+        use SudokuNumber::*;
+
+        for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
+            for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
+                let index = BlockIndex::new(row, col);
+                if let SudokuBlockStatus::Resolved(number) = &self.get_block(&index).status {
+                    if self.find_mistakes(&index, *number).is_some() {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        true
     }
 }
 
