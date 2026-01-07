@@ -11,7 +11,8 @@ use bevy::{
     },
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
-    window::{PresentMode, WindowTheme},
+    text::TextBounds,
+    window::{EnabledButtons, WindowTheme},
 };
 use sudoku_bevy::pancam::{DirectionKeys, PanCam, PanCamPlugin};
 use sudoku_solver::{
@@ -201,7 +202,7 @@ enum GameStates {
 #[derive(Debug, Component)]
 struct HelpText;
 
-const DEFAULT_HELP_TEXT: &'static str = "Use 'Space' to update possible values, 'Enter' to resolve blocks,\n'R' to reset, 'M' to change selection mode, 'C' to clear block,\n1 to 9 to set number and 'H' to engage Hidden single strategy.";
+const DEFAULT_HELP_TEXT: &'static str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
 
 fn main() {
     App::new()
@@ -210,13 +211,13 @@ fn main() {
                 primary_window: Some(Window {
                     title: "Let's play Sudoku".into(),
                     name: Some("sudoku.bevy.app".into()),
-                    resolution: (1000, 720).into(),
-                    present_mode: PresentMode::AutoVsync,
-                    // Tells Wasm to resize the window according to the available canvas
-                    fit_canvas_to_parent: true,
-                    // Tells Wasm not to override default event handling, like F5, Ctrl+R etc.
-                    prevent_default_event_handling: false,
+                    resolution: (860, 720).into(),
                     window_theme: Some(WindowTheme::Dark),
+                    resizable: false,
+                    enabled_buttons: EnabledButtons {
+                        maximize: false,
+                        ..Default::default()
+                    },
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -403,7 +404,7 @@ fn setup(
                 .with_children(|builder| {
                     let text_font = TextFont {
                         font: defaults_assets.default_font.clone(),
-                        font_size: 17.,
+                        font_size: 20.,
                         ..default()
                     };
 
@@ -411,7 +412,8 @@ fn setup(
                         Text2d::new(DEFAULT_HELP_TEXT.to_string()),
                         text_font,
                         TextColor(defaults.default_base_text_color),
-                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                        TextLayout::new(Justify::Center, LineBreak::WordBoundary),
+                        TextBounds::new(600., 80.),
                         HelpText,
                     ));
                 });
@@ -465,7 +467,9 @@ fn setup(
                             Default::default(),
                         )],
                     ))
-                    .observe(on_helper_block_clicked);
+                    .observe(on_helper_block_clicked)
+                    .observe(on_helper_block_hovered)
+                    .observe(on_helper_block_out);
             }
         });
 
@@ -530,7 +534,9 @@ fn setup(
                             Default::default(),
                         )],
                     ))
-                    .observe(on_helper_block_clicked);
+                    .observe(on_helper_block_clicked)
+                    .observe(on_helper_block_hovered)
+                    .observe(on_helper_block_out);
             }
         });
 
@@ -582,7 +588,9 @@ fn setup(
                                 Default::default(),
                             )],
                         ))
-                        .observe(on_helper_block_clicked);
+                        .observe(on_helper_block_clicked)
+                        .observe(on_helper_block_hovered)
+                        .observe(on_helper_block_out);
                 }
             }
         });
@@ -1268,6 +1276,65 @@ fn on_game_input(
                 board.engage_strategy(HiddenSingleStrategy);
             }
         },
+    }
+}
+
+fn on_helper_block_hovered(
+    over: On<Pointer<Over>>,
+    indexes: Query<&HelperBlock>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    if let Ok(block) = indexes.get(over.entity) {
+        let new_help_text = match &block.command_type {
+            CommandType::Number(sudoku_number) => {
+                format!(
+                    "Puts number {} in selected block.",
+                    (sudoku_number.to_u8() + 1)
+                )
+            }
+            CommandType::CalculatePossibilities => {
+                format!("Updates possible values based on currently filled blocks.")
+            }
+            CommandType::ResolveNakedSingles => format!(
+                "Resolve blocks that are naked singles (Blocks with only one possible number)."
+            ),
+            CommandType::Reset => format!("Reset the whole board (Use this if nothing works)."),
+            CommandType::ChangeSelectionMode => {
+                format!("Changes selection mode. Putting numbers or possibilities.")
+            }
+            CommandType::ClearBlock => format!("Clears currently selected block."),
+            CommandType::Direction(direction) => {
+                format!(
+                    "Moves the selector to the {} by one block.",
+                    match direction {
+                        Direction::Up => "Top",
+                        Direction::Down => "Bottom",
+                        Direction::Left => "Left",
+                        Direction::Right => "Right",
+                    }
+                )
+            }
+            CommandType::Strategy(strategy) => {
+                format!(
+                    "Applying strategy: {}",
+                    match strategy {
+                        Strategy::HiddenSingle => "Hidden singles.",
+                    }
+                )
+            }
+        };
+
+        help_text.0 = new_help_text;
+    }
+}
+
+fn on_helper_block_out(
+    over: On<Pointer<Out>>,
+    indexes: Query<&HelperBlock>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    if let Ok(_) = indexes.get(over.entity) {
+        help_text.0 = DEFAULT_HELP_TEXT.to_string();
     }
 }
 
