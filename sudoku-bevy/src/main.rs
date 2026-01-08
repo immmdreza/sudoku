@@ -4,6 +4,7 @@ use std::{
 };
 
 use bevy::{
+    asset::LoadState,
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, RED, WHITE, YELLOW},
@@ -193,7 +194,7 @@ impl TextBundle {
 }
 
 #[derive(Debug, States, Default, PartialEq, Eq, Hash, Clone)]
-enum GameStates {
+enum GameState {
     #[default]
     Playing,
     FinishedVerified,
@@ -203,6 +204,16 @@ enum GameStates {
 struct HelpText;
 
 const DEFAULT_HELP_TEXT: &'static str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
+
+#[derive(Debug, States, Default, PartialEq, Eq, Hash, Clone)]
+enum AppState {
+    #[default]
+    Loading,
+    Ready,
+}
+
+#[derive(Debug, Component)]
+struct LoadingEntity;
 
 fn main() {
     App::new()
@@ -239,16 +250,26 @@ fn main() {
             Duration::from_millis(100),
             TimerMode::Repeating,
         )))
-        .init_state::<GameStates>()
+        .init_state::<AppState>()
+        .init_state::<GameState>()
         .add_observer(on_game_input)
-        .add_systems(Startup, setup)
+        // Loading state systems
+        .add_systems(OnEnter(AppState::Loading), setup_asset_loading)
+        .add_systems(
+            Update,
+            check_assets_ready.run_if(in_state(AppState::Loading)),
+        )
+        // Ready state systems
+        .add_systems(OnEnter(AppState::Ready), setup_game)
         .add_systems(
             PostStartup,
-            (check_foundation_squares, check_block_squares).chain(),
+            (check_foundation_squares, check_block_squares)
+                .chain()
+                .run_if(in_state(AppState::Ready)),
         )
         .add_systems(
             Update,
-            (
+            ((
                 change_selected_block.run_if(
                     input_pressed(KeyCode::ArrowDown)
                         .or(input_pressed(KeyCode::ArrowUp))
@@ -273,9 +294,10 @@ fn main() {
                             .or(input_just_pressed(KeyCode::Digit9)),
                     ),
                 )
-                    .run_if(in_state(GameStates::Playing)),
+                    .run_if(in_state(GameState::Playing)),
                 reset.run_if(input_just_pressed(KeyCode::KeyR)),
-            ),
+            )
+                .run_if(in_state(AppState::Ready)),),
         )
         .add_systems(
             PostUpdate,
@@ -283,25 +305,89 @@ fn main() {
                 update_selected_block.run_if(resource_changed::<SelectedBlock>),
                 (
                     update_board,
-                    final_verification.run_if(in_state(GameStates::Playing)),
+                    final_verification.run_if(in_state(GameState::Playing)),
                 )
                     .chain()
                     .run_if(resource_changed::<SudokuBoardResources>),
                 update_mistakes_text.run_if(resource_changed::<Stats>),
             )
-                .chain(),
+                .chain()
+                .run_if(in_state(AppState::Ready)),
         )
         .run();
 }
 
-fn setup(
+fn setup_asset_loading(
     mut commands: Commands,
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut defaults: ResMut<DefaultMaterials>,
     mut defaults_assets: ResMut<DefaultAssets>,
     asset_server: Res<AssetServer>,
+) {
+    defaults.default_block_color = materials.add(Color::from(YELLOW));
+    defaults.default_solved_block_color = materials.add(Color::from(GREEN_400));
+    defaults.selected_resolving_block_color = materials.add(Color::from(YELLOW_400));
+    defaults.selected_possibilities_block_color = materials.add(Color::from(BLUE_200));
+    defaults.default_foundation_block_color = materials.add(Color::from(PURPLE));
+    defaults.default_possibilities_block_color = materials.add(Color::from(BLUE));
+
+    defaults.conflicting_source_color = materials.add(Color::from(RED));
+    defaults.conflicting_affected_color = materials.add(Color::from(RED_400));
+
+    defaults.default_base_text_color = Color::from(BLACK);
+    defaults.default_fixed_number_color = Color::from(GRAY_600);
+    defaults.default_possibility_number_color = Color::from(WHITE);
+    defaults.default_resolved_number_color = Color::from(BLACK);
+
+    let font = asset_server.load("fonts/FiraSans-Bold.ttf");
+    defaults_assets.default_font = font;
+
+    commands.spawn((
+        TextBundle::new(
+            "Loading things ...",
+            Handle::<Font>::default(),
+            40.,
+            WHITE,
+            Default::default(),
+        ),
+        LoadingEntity,
+    ));
+}
+
+fn check_assets_ready(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<AppState>>,
+    asset_server: Res<AssetServer>,
+    mut defaults_assets: ResMut<DefaultAssets>,
+    loading_entity: Single<Option<Entity>, With<LoadingEntity>>,
+) {
+    let resume = match asset_server.load_state(&defaults_assets.default_font) {
+        LoadState::Loaded => true,
+        LoadState::Failed(_) => {
+            defaults_assets.default_font = Handle::<Font>::default();
+            eprintln!("Failed to load font! Using default font.");
+            true
+        }
+        _ => {
+            // Wait ...
+            false
+        }
+    };
+
+    if resume {
+        next_state.set(AppState::Ready);
+        if let Some(entity) = loading_entity.as_ref() {
+            commands.entity(*entity).despawn();
+        }
+    }
+}
+
+fn setup_game(
+    mut commands: Commands,
+    mut sudoku_board: ResMut<SudokuBoardResources>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    defaults: Res<DefaultMaterials>,
+    defaults_assets: Res<DefaultAssets>,
 ) {
     let mut ortho = OrthographicProjection::default_2d();
     ortho.scale = 1.5;
@@ -337,25 +423,7 @@ fn setup(
 
     board.fill_board_u8(sudoku_samples::easy::SECOND).unwrap();
 
-    defaults.default_block_color = materials.add(Color::from(YELLOW));
-    defaults.default_solved_block_color = materials.add(Color::from(GREEN_400));
-    defaults.selected_resolving_block_color = materials.add(Color::from(YELLOW_400));
-    defaults.selected_possibilities_block_color = materials.add(Color::from(BLUE_200));
-    defaults.default_foundation_block_color = materials.add(Color::from(PURPLE));
-    defaults.default_possibilities_block_color = materials.add(Color::from(BLUE));
-
-    defaults.conflicting_source_color = materials.add(Color::from(RED));
-    defaults.conflicting_affected_color = materials.add(Color::from(RED_400));
-
-    defaults.default_base_text_color = Color::from(BLACK);
-    defaults.default_fixed_number_color = Color::from(GRAY_600);
-    defaults.default_possibility_number_color = Color::from(WHITE);
-    defaults.default_resolved_number_color = Color::from(BLACK);
-
     spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
-
-    let font = asset_server.load("fonts/FiraSans-Bold.ttf");
-    defaults_assets.default_font = font;
 
     commands.spawn(TextBundle::new(
         "Sudoku",
@@ -782,7 +850,7 @@ fn final_verification(
         == 0
     {
         if board.verify_board() {
-            commands.set_state(GameStates::FinishedVerified);
+            commands.set_state(GameState::FinishedVerified);
 
             help_text.0 = format!("The sudoku board solved successfully!\nYou can try resetting.");
             board.get_blocks().filter_resolved().for_each(|f| {
@@ -838,7 +906,7 @@ fn update_selected_block(
     defaults: Res<DefaultMaterials>,
     selected: Res<SelectedBlock>,
     board: Res<SudokuBoardResources>,
-    game_state: Res<State<GameStates>>,
+    game_state: Res<State<GameState>>,
     // mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
@@ -916,10 +984,10 @@ fn update_selected_block(
                     }
                 },
                 None => match game_state.get() {
-                    GameStates::Playing => {
+                    GameState::Playing => {
                         material.0 = defaults.default_block_color.clone();
                     }
-                    GameStates::FinishedVerified => {
+                    GameState::FinishedVerified => {
                         if block.is_resolved() {
                             material.0 = defaults.default_solved_block_color.clone();
                         } else {
@@ -1246,7 +1314,7 @@ fn on_game_input(
             #[cfg(debug_assertions)]
             println!("Resetting.");
             board.reset();
-            commands.set_state(GameStates::Playing);
+            commands.set_state(GameState::Playing);
 
             help_text.0 = DEFAULT_HELP_TEXT.to_string();
             board.get_blocks().filter_unresolved().for_each(|f| {
