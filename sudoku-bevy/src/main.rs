@@ -342,53 +342,6 @@ fn setup_asset_loading(
     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
     defaults_assets.default_font = font;
 
-    commands.spawn((
-        TextBundle::new(
-            "Loading things ...",
-            Handle::<Font>::default(),
-            40.,
-            WHITE,
-            Default::default(),
-        ),
-        LoadingEntity,
-    ));
-}
-
-fn check_assets_ready(
-    mut commands: Commands,
-    mut next_state: ResMut<NextState<AppState>>,
-    asset_server: Res<AssetServer>,
-    mut defaults_assets: ResMut<DefaultAssets>,
-    loading_entity: Single<Option<Entity>, With<LoadingEntity>>,
-) {
-    let resume = match asset_server.load_state(&defaults_assets.default_font) {
-        LoadState::Loaded => true,
-        LoadState::Failed(_) => {
-            defaults_assets.default_font = Handle::<Font>::default();
-            eprintln!("Failed to load font! Using default font.");
-            true
-        }
-        _ => {
-            // Wait ...
-            false
-        }
-    };
-
-    if resume {
-        next_state.set(AppState::Ready);
-        if let Some(entity) = loading_entity.as_ref() {
-            commands.entity(*entity).despawn();
-        }
-    }
-}
-
-fn setup_game(
-    mut commands: Commands,
-    mut sudoku_board: ResMut<SudokuBoardResources>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    defaults: Res<DefaultMaterials>,
-    defaults_assets: Res<DefaultAssets>,
-) {
     let mut ortho = OrthographicProjection::default_2d();
     ortho.scale = 1.5;
 
@@ -415,6 +368,53 @@ fn setup_game(
         },
     ));
 
+    commands.spawn((
+        TextBundle::new(
+            "Loading things ...",
+            Handle::<Font>::default(),
+            40.,
+            WHITE,
+            Default::default(),
+        ),
+        LoadingEntity,
+    ));
+}
+
+fn check_assets_ready(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<AppState>>,
+    asset_server: Res<AssetServer>,
+    mut defaults_assets: ResMut<DefaultAssets>,
+    loading_entity: Single<Option<Entity>, With<LoadingEntity>>,
+) {
+    let resume = match asset_server.load_state(&defaults_assets.default_font) {
+        LoadState::Loaded => true,
+        LoadState::Failed(_) => {
+            defaults_assets.default_font = Handle::<Font>::default();
+            eprintln!("Failed to load font! Using default font.");
+            false
+        }
+        _ => {
+            // Wait ...
+            false
+        }
+    };
+
+    if resume {
+        next_state.set(AppState::Ready);
+        if let Some(entity) = loading_entity.as_ref() {
+            commands.entity(*entity).despawn();
+        }
+    }
+}
+
+fn setup_game(
+    mut commands: Commands,
+    mut sudoku_board: ResMut<SudokuBoardResources>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    defaults: Res<DefaultMaterials>,
+    defaults_assets: Res<DefaultAssets>,
+) {
     let center = vec2(0., -50.);
     let width = 630.;
     let offset = 5.;
