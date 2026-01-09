@@ -325,6 +325,13 @@ where
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Copy)]
+pub enum ContainerType {
+    Row,
+    Column,
+    Square,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SudokuBoard {
     blocks: [[SudokuBlock; 9]; 9],
@@ -422,6 +429,30 @@ impl SudokuBoard {
         &mut SudokuBlock,
     > {
         SudokuContainer::new(self.blocks.iter_mut().flatten())
+    }
+
+    pub fn get_container(
+        &self,
+        container_type: ContainerType,
+        number: SudokuNumber,
+    ) -> Vec<&SudokuBlock> {
+        match container_type {
+            ContainerType::Row => self.get_row(number).collect(),
+            ContainerType::Column => self.get_col(number).collect(),
+            ContainerType::Square => self.get_square(number).collect(),
+        }
+    }
+
+    pub fn get_container_mut(
+        &mut self,
+        container_type: ContainerType,
+        number: SudokuNumber,
+    ) -> Vec<&mut SudokuBlock> {
+        match container_type {
+            ContainerType::Row => self.get_row_mut(number).collect(),
+            ContainerType::Column => self.get_col_mut(number).collect(),
+            ContainerType::Square => self.get_square_mut(number).collect(),
+        }
     }
 
     pub fn get_row(
