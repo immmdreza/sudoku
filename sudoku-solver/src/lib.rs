@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use crate::{
     numbers::{SudokuNumber, SudokuNumbers},
-    strategies::SudokuSolvingStrategy,
+    strategies::{StrategyMarker, SudokuSolvingStrategy},
 };
 
 use SudokuNumber::*;
@@ -34,7 +34,7 @@ impl BlockIndex {
     }
 
     pub fn square_number(&self) -> SudokuNumber {
-        square_number(self.row, self.col)
+        SudokuBoard::square_number(self.row, self.col)
     }
 }
 
@@ -155,6 +155,7 @@ impl SudokuBlock {
 pub struct Possibilities {
     pub numbers: SudokuNumbers,
     conflicting_numbers: SudokuNumbers,
+    strategy_markers: HashMap<SudokuNumber, StrategyMarker>,
 }
 
 impl Possibilities {
@@ -162,11 +163,24 @@ impl Possibilities {
         Self {
             numbers,
             conflicting_numbers: Default::default(),
+            strategy_markers: Default::default(),
         }
     }
 
     pub fn is_conflicting(&self, number: SudokuNumber) -> bool {
         self.numbers.has_number(number) && self.conflicting_numbers.has_number(number)
+    }
+
+    pub fn update_strategy_marker(&mut self, number: SudokuNumber, marker: StrategyMarker) {
+        if let Some(inside) = self.strategy_markers.get_mut(&number) {
+            *inside = marker;
+        } else {
+            self.strategy_markers.insert(number, marker);
+        }
+    }
+
+    pub fn clear_strategy_marker(&mut self, number: SudokuNumber) -> Option<StrategyMarker> {
+        self.strategy_markers.remove(&number)
     }
 }
 
@@ -268,7 +282,7 @@ where
     T: Iterator<Item = &'b SudokuBlock>,
 {
     pub fn get_numbers(self) -> SudokuNumbers {
-        get_numbers(self)
+        SudokuBoard::get_numbers(self)
     }
 
     pub fn filter_resolved(
@@ -465,7 +479,7 @@ impl SudokuBoard {
         >,
         &'b SudokuBlock,
     > {
-        let (start_row, start_col) = square_number_to_index(square_number);
+        let (start_row, start_col) = SudokuBoard::square_number_to_index(square_number);
         SudokuContainer::new(
             self.blocks[start_row..start_row + 3]
                 .iter()
@@ -484,7 +498,7 @@ impl SudokuBoard {
         >,
         &'b mut SudokuBlock,
     > {
-        let (start_row, start_col) = square_number_to_index(square_number);
+        let (start_row, start_col) = SudokuBoard::square_number_to_index(square_number);
         SudokuContainer::new(
             self.blocks[start_row..start_row + 3]
                 .iter_mut()
@@ -571,10 +585,15 @@ impl SudokuBoard {
     }
 
     fn find_mistakes(&self, index: &BlockIndex, number: SudokuNumber) -> Option<Vec<BlockIndex>> {
-        let row_m = find_similar_in_container(number, self.get_row(index.row), Some(index));
-        let col_m = find_similar_in_container(number, self.get_col(index.col), Some(index));
-        let square_m =
-            find_similar_in_container(number, self.get_square(index.square_number()), Some(index));
+        let row_m =
+            SudokuBoard::find_similar_in_container(number, self.get_row(index.row), Some(index));
+        let col_m =
+            SudokuBoard::find_similar_in_container(number, self.get_col(index.col), Some(index));
+        let square_m = SudokuBoard::find_similar_in_container(
+            number,
+            self.get_square(index.square_number()),
+            Some(index),
+        );
 
         let mut mistakes = row_m.chain(col_m).chain(square_m).collect::<Vec<_>>();
         mistakes.dedup();
@@ -754,63 +773,71 @@ impl SudokuBoard {
     }
 }
 
-fn square_number_to_index(square_number: SudokuNumber) -> (usize, usize) {
-    let start_row = (square_number.to_index() / 3) * 3;
-    let start_col = (square_number.to_index() % 3) * 3;
-    (start_row, start_col)
-}
-
-pub fn find_mistake_in_container<'s>(
-    iterator: impl Iterator<Item = &'s SudokuBlock>,
-) -> HashMap<SudokuNumber, Vec<BlockIndex>> {
-    let mut counts = HashMap::new();
-
-    for x in iterator {
-        let number = match x.status {
-            SudokuBlockStatus::Fixed(sudoku_number) => sudoku_number,
-            _ => continue,
-        };
-
-        let indexes = counts.entry(number).or_insert(vec![]);
-        indexes.push(x.index.clone());
+// Static functions.
+impl SudokuBoard {
+    pub fn iter_block_indexes() -> impl Iterator<Item = BlockIndex> {
+        SudokuNumber::iter_numbers().map(|(row, col)| BlockIndex::new(row, col))
     }
 
-    counts
-}
+    fn square_number_to_index(square_number: SudokuNumber) -> (usize, usize) {
+        let start_row = (square_number.to_index() / 3) * 3;
+        let start_col = (square_number.to_index() % 3) * 3;
+        (start_row, start_col)
+    }
 
-pub fn find_similar_in_container<'s>(
-    number: SudokuNumber,
-    iterator: impl Iterator<Item = &'s SudokuBlock>,
-    ignore_index: Option<&BlockIndex>,
-) -> impl Iterator<Item = BlockIndex> {
-    iterator
-        .filter(|f| f.is_fixed() || f.is_resolved())
-        .filter(move |f| ignore_index.is_some_and(|g| f.index != *g))
-        .filter(move |f| match f.status {
-            SudokuBlockStatus::Fixed(sudoku_number)
-            | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number == number,
-            _ => false,
-        })
-        .map(|f| f.index.clone())
-}
+    pub fn find_mistake_in_container<'s>(
+        iterator: impl Iterator<Item = &'s SudokuBlock>,
+    ) -> HashMap<SudokuNumber, Vec<BlockIndex>> {
+        let mut counts = HashMap::new();
 
-pub fn get_numbers<'s>(iterator: impl Iterator<Item = &'s SudokuBlock>) -> SudokuNumbers {
-    SudokuNumbers::new(iterator.filter_map(|f| match f.status {
-        SudokuBlockStatus::Fixed(sudoku_number) | SudokuBlockStatus::Resolved(sudoku_number) => {
-            Some(sudoku_number)
+        for x in iterator {
+            let number = match x.status {
+                SudokuBlockStatus::Fixed(sudoku_number) => sudoku_number,
+                _ => continue,
+            };
+
+            let indexes = counts.entry(number).or_insert(vec![]);
+            indexes.push(x.index.clone());
         }
-        _ => None,
-    }))
-}
 
-pub fn get_missing_numbers<'s>(iterator: impl Iterator<Item = &'s SudokuBlock>) -> SudokuNumbers {
-    SudokuNumbers::new(get_numbers(iterator).get_missing_numbers())
-}
+        counts
+    }
 
-pub fn square_number(row: SudokuNumber, col: SudokuNumber) -> SudokuNumber {
-    (((row.to_index() / 3) * 3 + (col.to_index() / 3)) + 1)
-        .try_into()
-        .unwrap()
+    pub fn find_similar_in_container<'s>(
+        number: SudokuNumber,
+        iterator: impl Iterator<Item = &'s SudokuBlock>,
+        ignore_index: Option<&BlockIndex>,
+    ) -> impl Iterator<Item = BlockIndex> {
+        iterator
+            .filter(|f| f.is_fixed() || f.is_resolved())
+            .filter(move |f| ignore_index.is_some_and(|g| f.index != *g))
+            .filter(move |f| match f.status {
+                SudokuBlockStatus::Fixed(sudoku_number)
+                | SudokuBlockStatus::Resolved(sudoku_number) => sudoku_number == number,
+                _ => false,
+            })
+            .map(|f| f.index.clone())
+    }
+
+    pub fn get_numbers<'s>(iterator: impl Iterator<Item = &'s SudokuBlock>) -> SudokuNumbers {
+        SudokuNumbers::new(iterator.filter_map(|f| match f.status {
+            SudokuBlockStatus::Fixed(sudoku_number)
+            | SudokuBlockStatus::Resolved(sudoku_number) => Some(sudoku_number),
+            _ => None,
+        }))
+    }
+
+    pub fn get_missing_numbers<'s>(
+        iterator: impl Iterator<Item = &'s SudokuBlock>,
+    ) -> SudokuNumbers {
+        SudokuNumbers::new(SudokuBoard::get_numbers(iterator).get_missing_numbers())
+    }
+
+    pub fn square_number(row: SudokuNumber, col: SudokuNumber) -> SudokuNumber {
+        (((row.to_index() / 3) * 3 + (col.to_index() / 3)) + 1)
+            .try_into()
+            .unwrap()
+    }
 }
 
 #[cfg(test)]

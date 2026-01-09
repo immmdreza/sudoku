@@ -4,18 +4,15 @@ use std::{
 };
 
 use bevy::{
-    asset::LoadState,
-    color::palettes::{
-        basic::PURPLE,
-        css::{BLACK, BLUE, RED, WHITE, YELLOW},
-        tailwind::{BLUE_200, GRAY_600, GREEN_400, RED_400, YELLOW_400},
-    },
+    color::palettes::css::{BLACK, RED, WHITE},
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
     text::TextBounds,
-    window::{EnabledButtons, WindowTheme},
 };
-use sudoku_bevy::pancam::{DirectionKeys, PanCam, PanCamPlugin};
+use sudoku_bevy::plugins::{
+    loading_plugin::{AppState, DefaultAssets, DefaultMaterials, LoadingPlugin},
+    shared::TextBundle,
+};
 use sudoku_solver::{
     BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
@@ -41,32 +38,6 @@ enum SelectionMode {
 struct SelectedBlock {
     mode: SelectionMode,
     current: (usize, usize),
-}
-
-#[derive(Debug, Resource, Default)]
-struct DefaultMaterials {
-    // Handles
-    default_foundation_block_color: Handle<ColorMaterial>,
-    default_possibilities_block_color: Handle<ColorMaterial>,
-    default_block_color: Handle<ColorMaterial>,
-    default_solved_block_color: Handle<ColorMaterial>,
-    selected_resolving_block_color: Handle<ColorMaterial>,
-    selected_possibilities_block_color: Handle<ColorMaterial>,
-
-    conflicting_source_color: Handle<ColorMaterial>,
-    conflicting_affected_color: Handle<ColorMaterial>,
-
-    // Colors
-    default_base_text_color: Color,
-    default_fixed_number_color: Color,
-    default_resolved_number_color: Color,
-    default_possibility_number_color: Color,
-}
-
-#[derive(Debug, Resource, Default)]
-struct DefaultAssets {
-    // Handles
-    default_font: Handle<Font>,
 }
 
 #[derive(Debug, Resource, Default)]
@@ -98,11 +69,6 @@ impl Display for Direction {
             Direction::Right => '→',
         })
     }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum Strategy {
-    HiddenSingle,
 }
 
 impl Display for Strategy {
@@ -162,37 +128,6 @@ impl GameInputs {
     }
 }
 
-#[derive(Debug, Bundle)]
-struct TextBundle {
-    text: Text2d,
-    font: TextFont,
-    color: TextColor,
-    layout: TextLayout,
-    transform: Transform,
-}
-
-impl TextBundle {
-    fn new(
-        text: impl Into<String>,
-        font: impl Into<Handle<Font>>,
-        font_size: f32,
-        color: impl Into<Color>,
-        transform: Transform,
-    ) -> Self {
-        Self {
-            text: Text2d(text.into()),
-            font: TextFont {
-                font: font.into(),
-                font_size,
-                ..Default::default()
-            },
-            color: TextColor(color.into()),
-            layout: TextLayout::new(Justify::Center, LineBreak::NoWrap),
-            transform,
-        }
-    }
-}
-
 #[derive(Debug, States, Default, PartialEq, Eq, Hash, Clone)]
 enum GameState {
     #[default]
@@ -205,60 +140,19 @@ struct HelpText;
 
 const DEFAULT_HELP_TEXT: &'static str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
 
-#[derive(Debug, States, Default, PartialEq, Eq, Hash, Clone)]
-enum AppState {
-    #[default]
-    Loading,
-    Ready,
-}
-
-#[derive(Debug, Component)]
-struct LoadingEntity;
-
 fn main() {
     App::new()
-        .add_plugins((
-            DefaultPlugins.set(WindowPlugin {
-                primary_window: Some(Window {
-                    title: "Let's play Sudoku".into(),
-                    name: Some("sudoku.bevy.app".into()),
-                    resolution: (860, 720).into(),
-                    window_theme: Some(WindowTheme::Dark),
-                    resizable: false,
-                    enabled_buttons: EnabledButtons {
-                        maximize: false,
-                        ..Default::default()
-                    },
-                    ..Default::default()
-                }),
-                ..Default::default()
-            }),
-            MeshPickingPlugin,
-            PanCamPlugin::default(),
-        ))
+        .add_plugins(LoadingPlugin)
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SudokuBoardSnapshotResources>()
         .init_resource::<SelectedBlock>()
-        .init_resource::<DefaultMaterials>()
-        .init_resource::<DefaultAssets>()
         .init_resource::<Stats>()
-        .insert_resource(MeshPickingSettings {
-            require_markers: true,
-            ..Default::default()
-        })
         .insert_resource(ChangeSelectionTimer(Timer::new(
             Duration::from_millis(100),
             TimerMode::Repeating,
         )))
-        .init_state::<AppState>()
         .init_state::<GameState>()
         .add_observer(on_game_input)
-        // Loading state systems
-        .add_systems(OnEnter(AppState::Loading), setup_asset_loading)
-        .add_systems(
-            Update,
-            check_assets_ready.run_if(in_state(AppState::Loading)),
-        )
         // Ready state systems
         .add_systems(OnEnter(AppState::Ready), setup_game)
         .add_systems(
@@ -315,97 +209,6 @@ fn main() {
                 .run_if(in_state(AppState::Ready)),
         )
         .run();
-}
-
-fn setup_asset_loading(
-    mut commands: Commands,
-    mut materials: ResMut<Assets<ColorMaterial>>,
-    mut defaults: ResMut<DefaultMaterials>,
-    mut defaults_assets: ResMut<DefaultAssets>,
-    asset_server: Res<AssetServer>,
-) {
-    defaults.default_block_color = materials.add(Color::from(YELLOW));
-    defaults.default_solved_block_color = materials.add(Color::from(GREEN_400));
-    defaults.selected_resolving_block_color = materials.add(Color::from(YELLOW_400));
-    defaults.selected_possibilities_block_color = materials.add(Color::from(BLUE_200));
-    defaults.default_foundation_block_color = materials.add(Color::from(PURPLE));
-    defaults.default_possibilities_block_color = materials.add(Color::from(BLUE));
-
-    defaults.conflicting_source_color = materials.add(Color::from(RED));
-    defaults.conflicting_affected_color = materials.add(Color::from(RED_400));
-
-    defaults.default_base_text_color = Color::from(BLACK);
-    defaults.default_fixed_number_color = Color::from(GRAY_600);
-    defaults.default_possibility_number_color = Color::from(WHITE);
-    defaults.default_resolved_number_color = Color::from(BLACK);
-
-    let font = asset_server.load("fonts/FiraSans-Bold.ttf");
-    defaults_assets.default_font = font;
-
-    let mut ortho = OrthographicProjection::default_2d();
-    ortho.scale = 1.5;
-
-    commands.spawn((
-        Camera2d,
-        MeshPickingCamera,
-        Projection::Orthographic(ortho),
-        PanCam {
-            grab_buttons: vec![MouseButton::Left], // which buttons should drag the camera
-            move_keys: DirectionKeys {
-                // the keyboard buttons used to move the camera
-                up: vec![KeyCode::KeyW], // initalize the struct like this or use the provided methods for
-                down: vec![KeyCode::KeyS], // common key combinations
-                left: vec![KeyCode::KeyA],
-                right: vec![KeyCode::KeyD],
-            },
-            min_scale: 1., // prevent the camera from zooming too far in
-            max_scale: 5., // prevent the camera from zooming too far out
-            min_x: -1500., // minimum x position of the camera window
-            max_x: 1500.,  // maximum x position of the camera window
-            min_y: -1500., // minimum y position of the camera window
-            max_y: 1500.,  // maximum y position of the camera window
-            ..Default::default()
-        },
-    ));
-
-    commands.spawn((
-        TextBundle::new(
-            "Loading things ...",
-            Handle::<Font>::default(),
-            40.,
-            WHITE,
-            Default::default(),
-        ),
-        LoadingEntity,
-    ));
-}
-
-fn check_assets_ready(
-    mut commands: Commands,
-    mut next_state: ResMut<NextState<AppState>>,
-    asset_server: Res<AssetServer>,
-    mut defaults_assets: ResMut<DefaultAssets>,
-    loading_entity: Single<Option<Entity>, With<LoadingEntity>>,
-) {
-    let resume = match asset_server.load_state(&defaults_assets.default_font) {
-        LoadState::Loaded => true,
-        LoadState::Failed(_) => {
-            defaults_assets.default_font = Handle::<Font>::default();
-            eprintln!("Failed to load font! Using default font.");
-            false
-        }
-        _ => {
-            // Wait ...
-            false
-        }
-    };
-
-    if resume {
-        next_state.set(AppState::Ready);
-        if let Some(entity) = loading_entity.as_ref() {
-            commands.entity(*entity).despawn();
-        }
-    }
 }
 
 fn setup_game(

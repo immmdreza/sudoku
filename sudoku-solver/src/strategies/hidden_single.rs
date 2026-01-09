@@ -1,65 +1,61 @@
 use crate::{
     BlockIndex, SudokuBlock, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
-    square_number,
     strategies::SudokuSolvingStrategy,
 };
 
 pub struct HiddenSingleStrategy;
 
 impl SudokuSolvingStrategy for HiddenSingleStrategy {
+    const STRATEGY: super::Strategy = super::Strategy::HiddenSingle;
+
     fn update_possible_numbers(&self, board: &mut crate::SudokuBoard) {
-        use SudokuNumber::*;
+        for (row, col) in SudokuNumber::iter_numbers() {
+            let mut hidden_number = None;
 
-        for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
-            for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
-                let mut hidden_number = None;
+            if let Some(row_hidden) = get_hidden_single(board, row, col, |b| b.get_row(row)) {
+                hidden_number = Some(row_hidden);
+            } else if let Some(col_hidden) = get_hidden_single(board, row, col, |b| b.get_col(col))
+            {
+                hidden_number = Some(col_hidden);
+            } else if let Some(square_hidden) = get_hidden_single(board, row, col, |b| {
+                b.get_square(SudokuBoard::square_number(row, col))
+            }) {
+                hidden_number = Some(square_hidden);
+            }
 
-                if let Some(row_hidden) = get_hidden_single(board, row, col, |b| b.get_row(row)) {
-                    hidden_number = Some(row_hidden);
-                } else if let Some(col_hidden) =
-                    get_hidden_single(board, row, col, |b| b.get_col(col))
+            if let Some(hidden) = hidden_number {
+                if let Some(possibilities) = board
+                    .get_block_mut(&BlockIndex::new(row, col))
+                    .status
+                    .as_possibilities_mut()
                 {
-                    hidden_number = Some(col_hidden);
-                } else if let Some(square_hidden) =
-                    get_hidden_single(board, row, col, |b| b.get_square(square_number(row, col)))
-                {
-                    hidden_number = Some(square_hidden);
+                    *possibilities = Default::default();
+                    possibilities.numbers.set_number(hidden);
                 }
 
-                if let Some(hidden) = hidden_number {
-                    if let Some(possibilities) = board
-                        .get_block_mut(&BlockIndex::new(row, col))
-                        .status
-                        .as_possibilities_mut()
-                    {
-                        *possibilities = Default::default();
-                        possibilities.numbers.set_number(hidden);
-                    }
+                for possibilities in board
+                    .get_row_mut(row)
+                    .filter(|b| b.col() != col)
+                    .filter_map(|f| f.status.as_possibilities_mut())
+                {
+                    possibilities.numbers.del_number(hidden);
+                }
 
-                    for possibilities in board
-                        .get_row_mut(row)
-                        .filter(|b| b.col() != col)
-                        .filter_map(|f| f.status.as_possibilities_mut())
-                    {
-                        possibilities.numbers.del_number(hidden);
-                    }
+                for possibilities in board
+                    .get_col_mut(col)
+                    .filter(|b| b.row() != row)
+                    .filter_map(|f| f.status.as_possibilities_mut())
+                {
+                    possibilities.numbers.del_number(hidden);
+                }
 
-                    for possibilities in board
-                        .get_col_mut(col)
-                        .filter(|b| b.row() != row)
-                        .filter_map(|f| f.status.as_possibilities_mut())
-                    {
-                        possibilities.numbers.del_number(hidden);
-                    }
-
-                    for possibilities in board
-                        .get_square_mut(square_number(row, col))
-                        .filter(|b| b.col() != col && b.row() != row)
-                        .filter_map(|f| f.status.as_possibilities_mut())
-                    {
-                        possibilities.numbers.del_number(hidden);
-                    }
+                for possibilities in board
+                    .get_square_mut(SudokuBoard::square_number(row, col))
+                    .filter(|b| b.col() != col && b.row() != row)
+                    .filter_map(|f| f.status.as_possibilities_mut())
+                {
+                    possibilities.numbers.del_number(hidden);
                 }
             }
         }
