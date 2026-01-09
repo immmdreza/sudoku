@@ -11,7 +11,7 @@ pub struct NakedPairStrategy;
 impl SudokuSolvingStrategy for NakedPairStrategy {
     const STRATEGY: super::Strategy = super::Strategy::NakedPair;
 
-    fn update_possible_numbers(&self, board: &mut crate::SudokuBoard) {
+    fn update_possible_numbers(&self, board: &mut crate::SudokuBoard, show_only_effect: bool) {
         for index in SudokuNumber::ALL {
             let mut grouping: HashMap<SudokuNumbers, HashSet<BlockIndex>> = HashMap::new();
             for (block_index, poss) in board
@@ -37,27 +37,37 @@ impl SudokuSolvingStrategy for NakedPairStrategy {
                             if indexes.contains(&index) {
                                 // This is a pair
                                 for number in numbers.iter() {
-                                    poss.update_strategy_marker(
-                                        number,
-                                        super::StrategyMarker {
-                                            strategy: super::Strategy::NakedPair,
-                                            effect: super::StrategyEffect::Source,
-                                        },
-                                    );
+                                    if show_only_effect {
+                                        poss.update_strategy_marker(
+                                            number,
+                                            super::StrategyMarker {
+                                                strategy: super::Strategy::NakedPair,
+                                                effect: super::StrategyEffect::Source,
+                                            },
+                                        );
+                                    } else {
+                                        poss.clear_strategy_marker(number);
+                                    }
                                 }
                             } else {
                                 // This is not a pair remove pair possibilities from it.
-                                for number in numbers.iter() {
-                                    poss.update_strategy_marker(
-                                        number,
-                                        super::StrategyMarker {
-                                            strategy: super::Strategy::NakedPair,
-                                            effect: super::StrategyEffect::Effected,
-                                        },
-                                    );
-                                }
 
-                                poss.numbers.del_numbers(numbers.iter());
+                                if !show_only_effect {
+                                    poss.numbers.del_numbers(numbers.iter());
+                                    for number in numbers.iter() {
+                                        poss.clear_strategy_marker(number);
+                                    }
+                                } else {
+                                    for number in numbers.iter() {
+                                        poss.update_strategy_marker(
+                                            number,
+                                            super::StrategyMarker {
+                                                strategy: super::Strategy::NakedPair,
+                                                effect: super::StrategyEffect::Effected,
+                                            },
+                                        );
+                                    }
+                                }
                             }
                         });
                 }

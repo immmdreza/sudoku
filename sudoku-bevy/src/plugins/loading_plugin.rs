@@ -34,6 +34,10 @@ pub struct DefaultMaterials {
     pub conflicting_source_color: Handle<ColorMaterial>,
     pub conflicting_affected_color: Handle<ColorMaterial>,
 
+    pub strategy_source_color: Handle<ColorMaterial>,
+    pub strategy_effected_color: Handle<ColorMaterial>,
+    pub strategy_source_text_color: Color,
+
     // Colors
     pub default_base_text_color: Color,
     pub default_fixed_number_color: Color,
@@ -78,6 +82,8 @@ impl Plugin for LoadingPlugin {
             require_markers: true,
             ..Default::default()
         })
+        .init_resource::<DefaultAssets>()
+        .init_resource::<DefaultMaterials>()
         .init_state::<AppState>()
         // Loading state systems
         .add_systems(OnEnter(AppState::Loading), setup_asset_loading)
@@ -104,6 +110,10 @@ fn setup_asset_loading(
 
     defaults.conflicting_source_color = materials.add(Color::from(RED));
     defaults.conflicting_affected_color = materials.add(Color::from(RED_400));
+
+    defaults.strategy_source_color = materials.add(Color::from(GREEN_400));
+    defaults.strategy_effected_color = materials.add(Color::from(BLACK));
+    defaults.strategy_source_text_color = Color::from(BLACK);
 
     defaults.default_base_text_color = Color::from(BLACK);
     defaults.default_fixed_number_color = Color::from(GRAY_600);

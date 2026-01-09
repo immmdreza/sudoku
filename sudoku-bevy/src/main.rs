@@ -16,7 +16,7 @@ use sudoku_bevy::plugins::{
 use sudoku_solver::{
     BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
-    strategies::{Strategy, hidden_single::HiddenSingleStrategy},
+    strategies::{Strategy, hidden_single::HiddenSingleStrategy, naked_pair::NakedPairStrategy},
 };
 
 use SudokuNumber::*;
@@ -38,6 +38,12 @@ enum SelectionMode {
 struct SelectedBlock {
     mode: SelectionMode,
     current: (usize, usize),
+}
+
+impl SelectedBlock {
+    fn block_index(&self) -> BlockIndex {
+        BlockIndex::from_index(self.current.1, self.current.0).unwrap()
+    }
 }
 
 #[derive(Debug, Resource, Default)]
@@ -132,6 +138,12 @@ struct HelpText;
 
 const DEFAULT_HELP_TEXT: &'static str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
 
+#[derive(Debug, Resource, Default)]
+struct EngagingStrategy {
+    strategy: Option<Strategy>,
+    showed_effect: bool,
+}
+
 fn main() {
     App::new()
         .add_plugins(LoadingPlugin)
@@ -139,6 +151,7 @@ fn main() {
         .init_resource::<SudokuBoardSnapshotResources>()
         .init_resource::<SelectedBlock>()
         .init_resource::<Stats>()
+        .init_resource::<EngagingStrategy>()
         .insert_resource(ChangeSelectionTimer(Timer::new(
             Duration::from_millis(100),
             TimerMode::Repeating,
@@ -164,7 +177,9 @@ fn main() {
                 ),
                 change_selection_mode.run_if(input_just_pressed(KeyCode::KeyM)),
                 (
-                    engage_strategy.run_if(input_just_pressed(KeyCode::KeyH)),
+                    engage_strategy.run_if(
+                        input_just_pressed(KeyCode::KeyH).or(input_just_pressed(KeyCode::KeyP)),
+                    ),
                     update_possibilities.run_if(input_just_pressed(KeyCode::Space)),
                     resolve_satisfied.run_if(input_just_pressed(KeyCode::Enter)),
                     manually_clear_block.run_if(input_just_pressed(KeyCode::KeyC)),
@@ -367,13 +382,6 @@ fn setup_game(
 
             for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
             {
-                let bundle = SquareBundle::new(
-                    defaults.default_block_color.clone(),
-                    &mut meshes,
-                    spawn_info.clone(),
-                    Some(master_index),
-                );
-
                 let command_type = available_commands[index];
                 let command_type_text = command_type.to_string();
                 let char_count = command_type_text.chars().count();
@@ -382,7 +390,12 @@ fn setup_game(
 
                 builder
                     .spawn((
-                        bundle,
+                        SquareBundle::new(
+                            defaults.default_block_color.clone(),
+                            &mut meshes,
+                            spawn_info.clone(),
+                            Some(master_index),
+                        ),
                         HelperBlock::new(command_type),
                         Pickable::default(),
                         children![TextBundle::new(
@@ -428,7 +441,7 @@ fn setup_game(
         .with_children(|builder| {
             let width = spawn_info.width;
             let master_index = spawn_info.index;
-            let strategies = [Strategy::HiddenSingle];
+            let strategies = [Strategy::HiddenSingle, Strategy::NakedPair];
 
             for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
             {
@@ -539,25 +552,25 @@ fn update_board(
                                 TextLayout::new_with_justify(text_justification),
                             ));
                         }
-                        SudokuBlockStatus::Possibilities(sudoku_numbers) => {
+                        SudokuBlockStatus::Possibilities(possibilities) => {
                             commands.entity(entity).with_children(|builder| {
                                 let master_index = spawn_info.index;
                                 let width = spawn_info.width;
 
-                                let numbers = sudoku_numbers
+                                let numbers = possibilities
                                     .numbers
                                     .iter()
-                                    .map(|f| f.to_index())
                                     .map(|f| {
-                                        let i = (f) / 3;
-                                        let j = (f) % 3;
-                                        (f + 1, i, j)
+                                        let indexed = f.to_index();
+                                        let i = (indexed) / 3;
+                                        let j = (indexed) % 3;
+                                        (f, indexed + 1, i, j)
                                     })
                                     .collect::<Vec<_>>();
 
                                 for spawn_info in square_group_info(width, 2., Default::default()) {
-                                    if let Some((number, _, _)) =
-                                        numbers.iter().find(|(_, i, j)| {
+                                    if let Some((the_number, number, _, _)) =
+                                        numbers.iter().find(|(_, _, i, j)| {
                                             i == &spawn_info.index.1 && j == &spawn_info.index.0
                                         })
                                     {
@@ -565,14 +578,24 @@ fn update_board(
 
                                         builder.spawn((
                                             SquareBundle::new(
-                                                if sudoku_numbers
+                                                if possibilities
                                                     .is_conflicting((*number).try_into().unwrap())
                                                 {
                                                     defaults.conflicting_source_color.clone()
                                                 } else {
-                                                    defaults
-                                                        .default_possibilities_block_color
-                                                        .clone()
+                                                    if let Some(strategy) = possibilities
+                                                        .has_strategy_effect(the_number)
+                                                    {
+                                                        if strategy.is_effected() {
+                                                            defaults.strategy_effected_color.clone()
+                                                        } else {
+                                                            defaults.strategy_source_color.clone()
+                                                        }
+                                                    } else {
+                                                        defaults
+                                                            .default_possibilities_block_color
+                                                            .clone()
+                                                    }
                                                 },
                                                 &mut meshes,
                                                 spawn_info,
@@ -582,9 +605,20 @@ fn update_board(
                                             children![(
                                                 Text2d::new(format!("{}", number)),
                                                 text_font.clone(),
-                                                TextColor(
-                                                    defaults.default_possibility_number_color,
-                                                ),
+                                                TextColor({
+                                                    if let Some(strategy) = possibilities
+                                                        .has_strategy_effect(the_number)
+                                                    {
+                                                        if strategy.is_source() {
+                                                            defaults.strategy_source_text_color
+                                                        } else {
+                                                            defaults
+                                                                .default_possibility_number_color
+                                                        }
+                                                    } else {
+                                                        defaults.default_possibility_number_color
+                                                    }
+                                                },),
                                                 TextLayout::new_with_justify(text_justification,),
                                             )],
                                         ));
@@ -807,6 +841,10 @@ fn engage_strategy(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCo
             Strategy::HiddenSingle,
         )));
     }
+
+    if keyboard_input.just_pressed(KeyCode::KeyP) {
+        commands.trigger(GameInputs::new(CommandType::Strategy(Strategy::NakedPair)));
+    }
 }
 
 fn resolve_satisfied(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
@@ -948,6 +986,11 @@ impl SquareIndex {
             (self.i, self.j)
         }
     }
+
+    fn block_index(&self) -> BlockIndex {
+        let (col, row) = self.actual_index();
+        BlockIndex::from_index(row, col).unwrap()
+    }
 }
 
 #[derive(Debug, Component)]
@@ -1040,6 +1083,7 @@ fn on_game_input(
     mut board: ResMut<SudokuBoardResources>,
     mut stats: ResMut<Stats>,
     mut selected: ResMut<SelectedBlock>,
+    mut engagin: ResMut<EngagingStrategy>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
@@ -1173,14 +1217,37 @@ fn on_game_input(
                 }
             };
         }
-        CommandType::Strategy(strategy) => match strategy {
-            Strategy::HiddenSingle => {
-                #[cfg(debug_assertions)]
-                println!("Engaging Hidden single Strategy.");
-                board.engage_strategy(HiddenSingleStrategy);
+        CommandType::Strategy(strategy) => {
+            let mut show_only_effect = false;
+            if engagin.strategy.is_some_and(|f| f == strategy) {
+                // This strategy was engaged before
+                if engagin.showed_effect {
+                    // The effects shown already! Time to take action.
+                    engagin.showed_effect = false;
+                } else {
+                    show_only_effect = true;
+                    engagin.showed_effect = true;
+                }
+            } else {
+                show_only_effect = true;
+                engagin.showed_effect = true;
+                engagin.strategy = Some(strategy);
             }
-            _ => (),
-        },
+
+            match strategy {
+                Strategy::HiddenSingle => {
+                    #[cfg(debug_assertions)]
+                    println!("Engaging Hidden single Strategy.");
+                    board.engage_strategy(HiddenSingleStrategy, show_only_effect);
+                }
+                Strategy::NakedPair => {
+                    #[cfg(debug_assertions)]
+                    println!("Engaging Naked pair Strategy.");
+                    board.engage_strategy(NakedPairStrategy, show_only_effect);
+                }
+                _ => (),
+            }
+        }
     }
 }
 

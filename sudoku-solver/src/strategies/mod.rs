@@ -29,6 +29,16 @@ pub struct StrategyMarker {
     effect: StrategyEffect,
 }
 
+impl StrategyMarker {
+    pub fn is_effected(&self) -> bool {
+        self.effect.is_effected()
+    }
+
+    pub fn is_source(&self) -> bool {
+        self.effect.is_source()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum StrategyEffect {
     /// The source.
@@ -44,8 +54,26 @@ pub enum StrategyEffect {
     // },
 }
 
+impl StrategyEffect {
+    /// Returns `true` if the strategy effect is [`Source`].
+    ///
+    /// [`Source`]: StrategyEffect::Source
+    #[must_use]
+    pub fn is_source(&self) -> bool {
+        matches!(self, Self::Source)
+    }
+
+    /// Returns `true` if the strategy effect is [`Effected`].
+    ///
+    /// [`Effected`]: StrategyEffect::Effected
+    #[must_use]
+    pub fn is_effected(&self) -> bool {
+        matches!(self, Self::Effected)
+    }
+}
+
 pub trait SudokuSolvingStrategy {
     const STRATEGY: Strategy;
 
-    fn update_possible_numbers(&self, board: &mut SudokuBoard);
+    fn update_possible_numbers(&self, board: &mut SudokuBoard, show_only_effect: bool);
 }

@@ -9,7 +9,7 @@ pub struct HiddenSingleStrategy;
 impl SudokuSolvingStrategy for HiddenSingleStrategy {
     const STRATEGY: super::Strategy = super::Strategy::HiddenSingle;
 
-    fn update_possible_numbers(&self, board: &mut crate::SudokuBoard) {
+    fn update_possible_numbers(&self, board: &mut crate::SudokuBoard, show_only_effect: bool) {
         for (row, col) in SudokuNumber::iter_numbers() {
             let mut hidden_number = None;
 
@@ -30,8 +30,18 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
                     .status
                     .as_possibilities_mut()
                 {
-                    *possibilities = Default::default();
-                    possibilities.numbers.set_number(hidden);
+                    if !show_only_effect {
+                        *possibilities = Default::default();
+                        possibilities.numbers.set_number(hidden);
+                    } else {
+                        possibilities.update_strategy_marker(
+                            hidden,
+                            super::StrategyMarker {
+                                strategy: super::Strategy::HiddenSingle,
+                                effect: super::StrategyEffect::Source,
+                            },
+                        );
+                    }
                 }
 
                 for possibilities in board
@@ -39,7 +49,18 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
                     .filter(|b| b.col() != col)
                     .filter_map(|f| f.status.as_possibilities_mut())
                 {
-                    possibilities.numbers.del_number(hidden);
+                    if !show_only_effect {
+                        possibilities.numbers.del_number(hidden);
+                        possibilities.clear_strategy_marker(hidden);
+                    } else {
+                        possibilities.update_strategy_marker(
+                            hidden,
+                            super::StrategyMarker {
+                                strategy: super::Strategy::HiddenSingle,
+                                effect: super::StrategyEffect::Effected,
+                            },
+                        );
+                    }
                 }
 
                 for possibilities in board
@@ -47,7 +68,18 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
                     .filter(|b| b.row() != row)
                     .filter_map(|f| f.status.as_possibilities_mut())
                 {
-                    possibilities.numbers.del_number(hidden);
+                    if !show_only_effect {
+                        possibilities.numbers.del_number(hidden);
+                        possibilities.clear_strategy_marker(hidden);
+                    } else {
+                        possibilities.update_strategy_marker(
+                            hidden,
+                            super::StrategyMarker {
+                                strategy: super::Strategy::HiddenSingle,
+                                effect: super::StrategyEffect::Effected,
+                            },
+                        );
+                    }
                 }
 
                 for possibilities in board
@@ -55,7 +87,18 @@ impl SudokuSolvingStrategy for HiddenSingleStrategy {
                     .filter(|b| b.col() != col && b.row() != row)
                     .filter_map(|f| f.status.as_possibilities_mut())
                 {
-                    possibilities.numbers.del_number(hidden);
+                    if !show_only_effect {
+                        possibilities.numbers.del_number(hidden);
+                        possibilities.clear_strategy_marker(hidden);
+                    } else {
+                        possibilities.update_strategy_marker(
+                            hidden,
+                            super::StrategyMarker {
+                                strategy: super::Strategy::HiddenSingle,
+                                effect: super::StrategyEffect::Effected,
+                            },
+                        );
+                    }
                 }
             }
         }

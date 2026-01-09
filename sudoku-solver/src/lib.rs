@@ -182,6 +182,10 @@ impl Possibilities {
     pub fn clear_strategy_marker(&mut self, number: SudokuNumber) -> Option<StrategyMarker> {
         self.strategy_markers.remove(&number)
     }
+
+    pub fn has_strategy_effect(&self, number: &SudokuNumber) -> Option<&StrategyMarker> {
+        self.strategy_markers.get(number)
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -550,14 +554,12 @@ impl SudokuBoard {
         }
     }
 
-    /// Since these strategies work with possible values in blocks and updating them,
-    /// Then [`SudokuBoard::update_possibilities`] is always called before engaging the strategy.
-    pub fn engage_strategy<S>(&mut self, strategy: S)
+    pub fn engage_strategy<S>(&mut self, strategy: S, show_only_effect: bool)
     where
         S: SudokuSolvingStrategy,
     {
-        self.update_possibilities();
-        strategy.update_possible_numbers(self);
+        // self.update_possibilities();
+        strategy.update_possible_numbers(self, show_only_effect);
     }
 
     pub fn resolve_satisfied_blocks(&mut self) {

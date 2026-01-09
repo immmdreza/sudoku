@@ -5,5 +5,5 @@ pub struct NakedSingleStrategy;
 impl SudokuSolvingStrategy for NakedSingleStrategy {
     const STRATEGY: super::Strategy = super::Strategy::NakedSingle;
 
-    fn update_possible_numbers(&self, _board: &mut crate::SudokuBoard) {}
+    fn update_possible_numbers(&self, _board: &mut crate::SudokuBoard, _show_only_effect: bool) {}
 }
