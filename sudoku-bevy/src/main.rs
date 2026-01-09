@@ -16,7 +16,7 @@ use sudoku_bevy::plugins::{
 use sudoku_solver::{
     BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
-    strategies::hidden_single::HiddenSingleStrategy,
+    strategies::{Strategy, hidden_single::HiddenSingleStrategy},
 };
 
 use SudokuNumber::*;
@@ -68,14 +68,6 @@ impl Display for Direction {
             Direction::Left => '←',
             Direction::Right => '→',
         })
-    }
-}
-
-impl Display for Strategy {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Strategy::HiddenSingle => f.write_char('H'),
-        }
     }
 }
 
@@ -1187,6 +1179,7 @@ fn on_game_input(
                 println!("Engaging Hidden single Strategy.");
                 board.engage_strategy(HiddenSingleStrategy);
             }
+            _ => (),
         },
     }
 }
@@ -1228,6 +1221,8 @@ fn on_helper_block_hovered(
                     "Applying strategy: {}",
                     match strategy {
                         Strategy::HiddenSingle => "Hidden singles.",
+                        Strategy::NakedSingle => "Naked single",
+                        Strategy::NakedPair => "Naked pair",
                     }
                 )
             }

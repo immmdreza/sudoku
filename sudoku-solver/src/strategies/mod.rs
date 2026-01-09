@@ -1,3 +1,5 @@
+use std::fmt::{Display, Write as _};
+
 use crate::SudokuBoard;
 
 pub mod hidden_single;
@@ -9,6 +11,16 @@ pub enum Strategy {
     NakedSingle,
     HiddenSingle,
     NakedPair,
+}
+
+impl Display for Strategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Strategy::HiddenSingle => f.write_char('H'),
+            Strategy::NakedSingle => f.write_char('S'),
+            Strategy::NakedPair => f.write_char('P'),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
