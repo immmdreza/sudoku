@@ -12,7 +12,9 @@ use bevy::{
     text::TextBounds,
 };
 use sudoku_bevy::plugins::{
-    loading_plugin::{AppState, DefaultAssets, DefaultMaterials, LoadingPlugin},
+    loading_plugin::{
+        AppState, DefaultAssets, DefaultMaterials, LoadingPlugin, StrategyMarkerColors,
+    },
     shared::TextBundle,
 };
 use sudoku_solver::{
@@ -227,6 +229,7 @@ fn setup_game(
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
+    strategy_colors: Res<StrategyMarkerColors>,
 ) {
     let center = vec2(0., -50.);
     let width = 630.;
@@ -452,7 +455,11 @@ fn setup_game(
                     builder
                         .spawn((
                             SquareBundle::new(
-                                defaults.default_block_color.clone(),
+                                if let Some(color) = strategy_colors.get(strategy) {
+                                    color.background.clone()
+                                } else {
+                                    defaults.default_block_color.clone()
+                                },
                                 &mut meshes,
                                 spawn_info.clone(),
                                 Some(master_index),
@@ -463,7 +470,11 @@ fn setup_game(
                                 strategy.to_string(),
                                 defaults_assets.default_font.clone(),
                                 spawn_info.width,
-                                defaults.default_fixed_number_color,
+                                if let Some(color) = strategy_colors.get(strategy) {
+                                    color.text
+                                } else {
+                                    defaults.default_fixed_number_color
+                                },
                                 Default::default(),
                             )],
                         ))
@@ -494,6 +505,7 @@ fn update_board(
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
+    strategy_colors: Res<StrategyMarkerColors>,
     board: Res<SudokuBoardResources>,
     mut snapshot: ResMut<SudokuBoardSnapshotResources>,
     mut blocks: Query<
@@ -591,7 +603,13 @@ fn update_board(
                                                     if strategy.is_effected() {
                                                         defaults.strategy_effected_color.clone()
                                                     } else {
-                                                        defaults.strategy_source_color.clone()
+                                                        if let Some(color) = strategy_colors
+                                                            .get(&strategy.strategy())
+                                                        {
+                                                            color.background.clone()
+                                                        } else {
+                                                            defaults.strategy_source_color.clone()
+                                                        }
                                                     }
                                                 } else {
                                                     defaults
@@ -611,7 +629,13 @@ fn update_board(
                                                         .has_strategy_effect(the_number)
                                                     {
                                                         if strategy.is_source() {
-                                                            defaults.strategy_source_text_color
+                                                            if let Some(color) = strategy_colors
+                                                                .get(&strategy.strategy())
+                                                            {
+                                                                color.text
+                                                            } else {
+                                                                defaults.strategy_source_text_color
+                                                            }
                                                         } else {
                                                             defaults
                                                                 .default_possibility_number_color

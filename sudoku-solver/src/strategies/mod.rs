@@ -37,6 +37,10 @@ impl StrategyMarker {
     pub fn is_source(&self) -> bool {
         self.effect.is_source()
     }
+
+    pub fn strategy(&self) -> Strategy {
+        self.strategy
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

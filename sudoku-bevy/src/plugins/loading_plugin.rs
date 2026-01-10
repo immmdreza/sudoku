@@ -3,11 +3,13 @@ use bevy::{
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, RED, WHITE, YELLOW},
-        tailwind::{BLUE_200, GRAY_600, GREEN_400, RED_400, YELLOW_400},
+        tailwind::{BLUE_200, GRAY_600, GREEN_400, ORANGE_400, RED_400, YELLOW_400},
     },
+    platform::collections::HashMap,
     prelude::*,
     window::{EnabledButtons, WindowTheme},
 };
+use sudoku_solver::strategies::Strategy;
 
 use crate::{
     pancam::{DirectionKeys, PanCam, PanCamPlugin},
@@ -54,6 +56,24 @@ pub struct DefaultAssets {
 #[derive(Debug, Component)]
 struct LoadingEntity;
 
+#[derive(Debug)]
+pub struct BlockColorInfo {
+    pub text: Color,
+    pub background: Handle<ColorMaterial>,
+}
+
+impl BlockColorInfo {
+    fn new(text: impl Into<Color>, background: Handle<ColorMaterial>) -> Self {
+        Self {
+            text: text.into(),
+            background,
+        }
+    }
+}
+
+#[derive(Debug, Resource, Default, Deref, DerefMut)]
+pub struct StrategyMarkerColors(pub HashMap<Strategy, BlockColorInfo>);
+
 /// This actually takes care of adding default plugins.
 pub struct LoadingPlugin;
 
@@ -84,6 +104,7 @@ impl Plugin for LoadingPlugin {
         })
         .init_resource::<DefaultAssets>()
         .init_resource::<DefaultMaterials>()
+        .init_resource::<StrategyMarkerColors>()
         .init_state::<AppState>()
         // Loading state systems
         .add_systems(OnEnter(AppState::Loading), setup_asset_loading)
@@ -99,6 +120,7 @@ fn setup_asset_loading(
     mut materials: ResMut<Assets<ColorMaterial>>,
     mut defaults: ResMut<DefaultMaterials>,
     mut defaults_assets: ResMut<DefaultAssets>,
+    mut strategy_colors: ResMut<StrategyMarkerColors>,
     asset_server: Res<AssetServer>,
 ) {
     defaults.default_block_color = materials.add(Color::from(YELLOW));
@@ -119,6 +141,16 @@ fn setup_asset_loading(
     defaults.default_fixed_number_color = Color::from(GRAY_600);
     defaults.default_possibility_number_color = Color::from(WHITE);
     defaults.default_resolved_number_color = Color::from(BLACK);
+
+    strategy_colors.insert(
+        Strategy::HiddenSingle,
+        BlockColorInfo::new(BLACK, materials.add(Color::from(GREEN_400))),
+    );
+
+    strategy_colors.insert(
+        Strategy::NakedPair,
+        BlockColorInfo::new(BLACK, materials.add(Color::from(ORANGE_400))),
+    );
 
     let font = asset_server.load("fonts/FiraSans-Bold.ttf");
     defaults_assets.default_font = font;
