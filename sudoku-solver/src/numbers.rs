@@ -37,8 +37,7 @@ impl SudokuNumber {
     pub fn iter_numbers() -> impl Iterator<Item = (SudokuNumber, SudokuNumber)> {
         SudokuNumber::ALL
             .into_iter()
-            .map(|row| SudokuNumber::ALL.into_iter().map(move |col| (row, col)))
-            .flatten()
+            .flat_map(|row| SudokuNumber::ALL.into_iter().map(move |col| (row, col)))
     }
 }
 

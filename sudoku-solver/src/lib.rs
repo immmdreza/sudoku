@@ -632,9 +632,9 @@ impl SudokuBoard {
         mistakes.dedup();
 
         if mistakes.is_empty() {
-            return None;
+            None
         } else {
-            return Some(mistakes);
+            Some(mistakes)
         }
     }
 
@@ -794,15 +794,21 @@ impl SudokuBoard {
         for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
             for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
                 let index = BlockIndex::new(row, col);
-                if let SudokuBlockStatus::Resolved(number) = &self.get_block(&index).status {
-                    if self.find_mistakes(&index, *number).is_some() {
-                        return false;
-                    }
+                if let SudokuBlockStatus::Resolved(number) = &self.get_block(&index).status
+                    && self.find_mistakes(&index, *number).is_some()
+                {
+                    return false;
                 }
             }
         }
 
         true
+    }
+
+    pub fn clear_strategy_markers(&mut self) {
+        self.get_blocks_mut()
+            .filter_map(|f| f.status.as_possibilities_mut())
+            .for_each(|f| f.strategy_markers.clear());
     }
 }
 

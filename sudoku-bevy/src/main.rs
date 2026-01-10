@@ -1,3 +1,5 @@
+#![allow(clippy::too_many_arguments)]
+
 use std::{
     fmt::{Display, Write},
     time::Duration,
@@ -41,6 +43,7 @@ struct SelectedBlock {
 }
 
 impl SelectedBlock {
+    #[allow(dead_code)]
     fn block_index(&self) -> BlockIndex {
         BlockIndex::from_index(self.current.1, self.current.0).unwrap()
     }
@@ -136,7 +139,7 @@ enum GameState {
 #[derive(Debug, Component)]
 struct HelpText;
 
-const DEFAULT_HELP_TEXT: &'static str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
+const DEFAULT_HELP_TEXT: &str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
 
 #[derive(Debug, Resource, Default)]
 struct EngagingStrategy {
@@ -582,20 +585,18 @@ fn update_board(
                                                     .is_conflicting((*number).try_into().unwrap())
                                                 {
                                                     defaults.conflicting_source_color.clone()
-                                                } else {
-                                                    if let Some(strategy) = possibilities
-                                                        .has_strategy_effect(the_number)
-                                                    {
-                                                        if strategy.is_effected() {
-                                                            defaults.strategy_effected_color.clone()
-                                                        } else {
-                                                            defaults.strategy_source_color.clone()
-                                                        }
+                                                } else if let Some(strategy) =
+                                                    possibilities.has_strategy_effect(the_number)
+                                                {
+                                                    if strategy.is_effected() {
+                                                        defaults.strategy_effected_color.clone()
                                                     } else {
-                                                        defaults
-                                                            .default_possibilities_block_color
-                                                            .clone()
+                                                        defaults.strategy_source_color.clone()
                                                     }
+                                                } else {
+                                                    defaults
+                                                        .default_possibilities_block_color
+                                                        .clone()
                                                 },
                                                 &mut meshes,
                                                 spawn_info,
@@ -633,26 +634,27 @@ fn update_board(
                 println!("Updated ({:?}, {:?})", row, col);
             }
 
-            if block.conflicting != snapshot_block.conflicting && selected.current != (i, j) {
-                if let Some((_, _, _, mut material)) = blocks.iter_mut().find(|(_, _, index, _)| {
+            if block.conflicting != snapshot_block.conflicting
+                && selected.current != (i, j)
+                && let Some((_, _, _, mut material)) = blocks.iter_mut().find(|(_, _, index, _)| {
                     let index = index.actual_index();
                     index.0 == i && index.1 == j
-                }) {
-                    match &block.conflicting {
-                        Some(conflicting) => match conflicting {
-                            sudoku_solver::Conflicting::AffectedBy(_) => {
-                                material.0 = defaults.conflicting_affected_color.clone();
-                            }
-                            sudoku_solver::Conflicting::Source => {
-                                material.0 = defaults.conflicting_source_color.clone();
-                            }
-                            sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
-                                material.0 = defaults.conflicting_affected_color.clone();
-                            }
-                        },
-                        None => {
-                            material.0 = defaults.default_block_color.clone();
+                })
+            {
+                match &block.conflicting {
+                    Some(conflicting) => match conflicting {
+                        sudoku_solver::Conflicting::AffectedBy(_) => {
+                            material.0 = defaults.conflicting_affected_color.clone();
                         }
+                        sudoku_solver::Conflicting::Source => {
+                            material.0 = defaults.conflicting_source_color.clone();
+                        }
+                        sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
+                            material.0 = defaults.conflicting_affected_color.clone();
+                        }
+                    },
+                    None => {
+                        material.0 = defaults.default_block_color.clone();
                     }
                 }
             }
@@ -681,7 +683,8 @@ fn final_verification(
         if board.verify_board() {
             commands.set_state(GameState::FinishedVerified);
 
-            help_text.0 = format!("The sudoku board solved successfully!\nYou can try resetting.");
+            help_text.0 =
+                "The sudoku board solved successfully!\nYou can try resetting.".to_string();
             board.get_blocks().filter_resolved().for_each(|f| {
                 if let Some((_, mut mesh)) = blocks.iter_mut().find(|(si, _)| {
                     let index = si.actual_index();
@@ -789,8 +792,8 @@ fn update_selected_block(
         };
     }
 
-    for (index, mut material) in blocks.iter_mut() {
-        let index = index.actual_index();
+    for (square_index, mut material) in blocks.iter_mut() {
+        let index = square_index.actual_index();
         if index.0 == selected.current.0 && index.1 == selected.current.1 {
             continue;
         }
@@ -798,7 +801,7 @@ fn update_selected_block(
         if material.0.id() == defaults.selected_possibilities_block_color.id()
             || material.0.id() == defaults.selected_resolving_block_color.id()
         {
-            let block = board.get_block(&BlockIndex::from_index(index.1, index.0).unwrap());
+            let block = board.get_block(&square_index.block_index());
 
             match &block.conflicting {
                 Some(conflicting) => match conflicting {
@@ -925,7 +928,7 @@ fn _update_block(
             }
 
             block.status = SudokuBlockStatus::Resolved(number);
-            return Resolved;
+            Resolved
         }
         SelectionMode::Possibilities => {
             if let Some(pos) = block.status.as_possibilities_mut() {
@@ -934,28 +937,28 @@ fn _update_block(
 
                     if pos.numbers.count_numbers() == 0 {
                         block.status = SudokuBlockStatus::Unresolved;
-                        return Cleared;
+                        Cleared
                     } else {
-                        return Possible {
+                        Possible {
                             number,
                             is_cleared: true,
-                        };
+                        }
                     }
                 } else {
                     pos.numbers.set_number(number);
-                    return Possible {
+                    Possible {
                         number,
                         is_cleared: false,
-                    };
+                    }
                 }
             } else {
                 block.status = SudokuBlockStatus::Possibilities(SudokuPossibilities::new(
                     SudokuNumbers::new([number]),
                 ));
-                return Possible {
+                Possible {
                     number,
                     is_cleared: false,
-                };
+                }
             }
         }
     }
@@ -1083,7 +1086,7 @@ fn on_game_input(
     mut board: ResMut<SudokuBoardResources>,
     mut stats: ResMut<Stats>,
     mut selected: ResMut<SelectedBlock>,
-    mut engagin: ResMut<EngagingStrategy>,
+    mut engaging: ResMut<EngagingStrategy>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
@@ -1098,43 +1101,40 @@ fn on_game_input(
                 _ => {
                     let update_result = Some(_update_block(&selected, block, sudoku_number));
 
-                    match update_result {
-                        Some(result) => {
-                            match result {
-                                BlockUpdateResult::Cleared => {
-                                    board.mark_conflicts(&block_index, None);
+                    if let Some(result) = update_result {
+                        match result {
+                            BlockUpdateResult::Cleared => {
+                                board.mark_conflicts(&block_index, None);
+                            }
+                            BlockUpdateResult::Resolved => {
+                                board.mark_conflicts(&block_index, None);
+
+                                let block = board.get_block(&block_index);
+                                if block
+                                    .conflicting
+                                    .as_ref()
+                                    .is_some_and(|f| matches!(f, Conflicting::Source))
+                                {
+                                    // This is a mistake!
+                                    stats.mistakes += 1;
+                                    #[cfg(debug_assertions)]
+                                    println!("This is a mistake!")
                                 }
-                                BlockUpdateResult::Resolved => {
-                                    board.mark_conflicts(&block_index, None);
+                            }
+                            BlockUpdateResult::Possible { number, is_cleared } => {
+                                board.mark_conflicts(&block_index, Some((number, is_cleared)));
 
-                                    let block = board.get_block(&block_index);
-                                    if block
-                                        .conflicting
-                                        .as_ref()
-                                        .is_some_and(|f| matches!(f, Conflicting::Source))
-                                    {
-                                        // This is a mistake!
-                                        stats.mistakes += 1;
-                                        #[cfg(debug_assertions)]
-                                        println!("This is a mistake!")
-                                    }
-                                }
-                                BlockUpdateResult::Possible { number, is_cleared } => {
-                                    board.mark_conflicts(&block_index, Some((number, is_cleared)));
+                                let block = board.get_block(&block_index);
+                                let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
 
-                                    let block = board.get_block(&block_index);
-                                    let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
-
-                                    if poss.is_conflicting(number) {
-                                        // This is also a mistake
-                                        stats.possibility_mistakes += 1;
-                                        #[cfg(debug_assertions)]
-                                        println!("This is also a mistake!")
-                                    }
+                                if poss.is_conflicting(number) {
+                                    // This is also a mistake
+                                    stats.possibility_mistakes += 1;
+                                    #[cfg(debug_assertions)]
+                                    println!("This is also a mistake!")
                                 }
                             }
                         }
-                        None => (),
                     }
                 }
             }
@@ -1219,19 +1219,21 @@ fn on_game_input(
         }
         CommandType::Strategy(strategy) => {
             let mut show_only_effect = false;
-            if engagin.strategy.is_some_and(|f| f == strategy) {
+            if engaging.strategy.is_some_and(|f| f == strategy) {
                 // This strategy was engaged before
-                if engagin.showed_effect {
+                if engaging.showed_effect {
                     // The effects shown already! Time to take action.
-                    engagin.showed_effect = false;
+                    engaging.showed_effect = false;
                 } else {
                     show_only_effect = true;
-                    engagin.showed_effect = true;
+                    engaging.showed_effect = true;
                 }
             } else {
+                // This is a new strategy marker.
+                board.clear_strategy_markers();
                 show_only_effect = true;
-                engagin.showed_effect = true;
-                engagin.strategy = Some(strategy);
+                engaging.showed_effect = true;
+                engaging.strategy = Some(strategy);
             }
 
             match strategy {
@@ -1262,16 +1264,17 @@ fn on_helper_block_hovered(
                 format!("Puts number {} in selected block.", (sudoku_number.to_u8()))
             }
             CommandType::CalculatePossibilities => {
-                format!("Updates possible values based on currently filled blocks.")
+                "Updates possible values based on currently filled blocks.".to_string()
             }
-            CommandType::ResolveNakedSingles => format!(
+            CommandType::ResolveNakedSingles => {
                 "Resolve blocks that are naked singles (Blocks with only one possible number)."
-            ),
-            CommandType::Reset => format!("Reset the whole board (Use this if nothing works)."),
-            CommandType::ChangeSelectionMode => {
-                format!("Changes selection mode. Putting numbers or possibilities.")
+                    .to_string()
             }
-            CommandType::ClearBlock => format!("Clears currently selected block."),
+            CommandType::Reset => "Reset the whole board (Use this if nothing works).".to_string(),
+            CommandType::ChangeSelectionMode => {
+                "Changes selection mode. Putting numbers or possibilities.".to_string()
+            }
+            CommandType::ClearBlock => "Clears currently selected block.".to_string(),
             CommandType::Direction(direction) => {
                 format!(
                     "Moves the selector to the {} by one block.",
@@ -1304,7 +1307,7 @@ fn on_helper_block_out(
     indexes: Query<&HelperBlock>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
-    if let Ok(_) = indexes.get(over.entity) {
+    if indexes.get(over.entity).is_ok() {
         help_text.0 = DEFAULT_HELP_TEXT.to_string();
     }
 }

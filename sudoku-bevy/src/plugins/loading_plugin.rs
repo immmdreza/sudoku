@@ -76,7 +76,7 @@ impl Plugin for LoadingPlugin {
                 ..Default::default()
             }),
             MeshPickingPlugin,
-            PanCamPlugin::default(),
+            PanCamPlugin,
         ))
         .insert_resource(MeshPickingSettings {
             require_markers: true,
