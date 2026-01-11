@@ -10,6 +10,7 @@ use bevy::{
     color::palettes::css::{BLACK, RED, WHITE, YELLOW},
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
+    sprite::Anchor,
     text::TextBounds,
 };
 use sudoku_bevy::plugins::{
@@ -607,9 +608,10 @@ fn setup_game(
             defaults_assets.default_font.clone(),
             20.,
             YELLOW,
-            Transform::from_translation(Vec3::default().with_x(155.).with_y(482.)),
+            Transform::from_translation(Vec3::default().with_x(90.).with_y(482.)),
             TextLayout::new(Justify::Left, LineBreak::NoWrap),
         ),
+        Anchor::CENTER_LEFT,
         ActiveBoardText,
     ));
 
