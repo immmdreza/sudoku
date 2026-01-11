@@ -1,12 +1,13 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::{
+    collections::HashMap,
     fmt::{Display, Write},
     time::Duration,
 };
 
 use bevy::{
-    color::palettes::css::{BLACK, RED, WHITE},
+    color::palettes::css::{BLACK, RED, WHITE, YELLOW},
     input::common_conditions::{input_just_pressed, input_pressed},
     prelude::*,
     text::TextBounds,
@@ -25,11 +26,80 @@ use sudoku_solver::{
 
 use SudokuNumber::*;
 
-#[derive(Debug, Resource, Default, PartialEq, Eq, Deref, DerefMut)]
-struct SudokuBoardResources(SudokuBoard);
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+enum SudokuBoardDifficulty {
+    Easy,
+    #[default]
+    Normal,
+    Hard,
+    Expert,
+}
 
-#[derive(Debug, Resource, Default, PartialEq, Eq, Deref, DerefMut)]
-struct SudokuBoardSnapshotResources(SudokuBoard);
+impl Display for SudokuBoardDifficulty {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SudokuBoardDifficulty::Easy => write!(f, "Easy"),
+            SudokuBoardDifficulty::Normal => write!(f, "Normal"),
+            SudokuBoardDifficulty::Hard => write!(f, "Hard"),
+            SudokuBoardDifficulty::Expert => write!(f, "Expert"),
+        }
+    }
+}
+
+#[derive(Debug, Resource, Default)]
+struct ActiveBoard {
+    difficulty: Option<SudokuBoardDifficulty>,
+    index: usize,
+}
+
+#[derive(Debug, Resource, Default)]
+struct ActiveBoardChanged(bool);
+
+#[derive(Debug, Resource, Default, PartialEq, Eq)]
+struct SudokuBoardResources {
+    boards: HashMap<Option<SudokuBoardDifficulty>, Vec<SudokuBoard>>,
+}
+
+impl SudokuBoardResources {
+    fn active_board(&self, active_board: &ActiveBoard) -> &SudokuBoard {
+        self.boards
+            .get(&active_board.difficulty)
+            .unwrap()
+            .get(active_board.index)
+            .unwrap()
+    }
+
+    fn active_board_mut(&mut self, active_board: &ActiveBoard) -> &mut SudokuBoard {
+        self.boards
+            .get_mut(&active_board.difficulty)
+            .unwrap()
+            .get_mut(active_board.index)
+            .unwrap()
+    }
+}
+
+#[derive(Debug, Resource, Default, PartialEq, Eq)]
+struct SudokuBoardSnapshotResources {
+    boards: HashMap<Option<SudokuBoardDifficulty>, Vec<SudokuBoard>>,
+}
+
+impl SudokuBoardSnapshotResources {
+    fn active_board(&self, active_board: &ActiveBoard) -> &SudokuBoard {
+        self.boards
+            .get(&active_board.difficulty)
+            .unwrap()
+            .get(active_board.index)
+            .unwrap()
+    }
+
+    fn active_board_mut(&mut self, active_board: &ActiveBoard) -> &mut SudokuBoard {
+        self.boards
+            .get_mut(&active_board.difficulty)
+            .unwrap()
+            .get_mut(active_board.index)
+            .unwrap()
+    }
+}
 
 #[derive(Debug, Default)]
 enum SelectionMode {
@@ -141,6 +211,15 @@ enum GameState {
 #[derive(Debug, Component)]
 struct HelpText;
 
+#[derive(Debug, Component)]
+struct ActiveBoardText;
+
+#[derive(Debug, Component)]
+struct BoardInfoBlock {
+    difficulty: Option<SudokuBoardDifficulty>,
+    index: usize,
+}
+
 const DEFAULT_HELP_TEXT: &str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
 
 #[derive(Debug, Resource, Default)]
@@ -149,19 +228,30 @@ struct EngagingStrategy {
     showed_effect: bool,
 }
 
+#[derive(Debug, Resource, Default)]
+struct EngagingStrategyMap {
+    engaging: HashMap<(Option<SudokuBoardDifficulty>, usize), EngagingStrategy>,
+}
+
+#[derive(Debug, Event)]
+struct UpdateBoardList;
+
 fn main() {
     App::new()
         .add_plugins(LoadingPlugin)
+        .init_resource::<ActiveBoard>()
+        .init_resource::<ActiveBoardChanged>()
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SudokuBoardSnapshotResources>()
         .init_resource::<SelectedBlock>()
         .init_resource::<Stats>()
-        .init_resource::<EngagingStrategy>()
+        .init_resource::<EngagingStrategyMap>()
         .insert_resource(ChangeSelectionTimer(Timer::new(
             Duration::from_millis(100),
             TimerMode::Repeating,
         )))
         .init_state::<GameState>()
+        .add_observer(update_boards_list)
         .add_observer(on_game_input)
         // Ready state systems
         .add_systems(OnEnter(AppState::Ready), setup_game)
@@ -210,12 +300,17 @@ fn main() {
             (
                 update_selected_block.run_if(resource_changed::<SelectedBlock>),
                 (
-                    update_board,
-                    final_verification.run_if(in_state(GameState::Playing)),
+                    update_board.run_if(
+                        resource_changed::<SudokuBoardResources>
+                            .or(resource_changed::<ActiveBoard>),
+                    ),
+                    final_verification.run_if(
+                        in_state(GameState::Playing).and(resource_changed::<SudokuBoardResources>),
+                    ),
                 )
-                    .chain()
-                    .run_if(resource_changed::<SudokuBoardResources>),
+                    .chain(),
                 update_mistakes_text.run_if(resource_changed::<Stats>),
+                update_active_board_text.run_if(resource_changed::<ActiveBoard>),
             )
                 .chain()
                 .run_if(in_state(AppState::Ready)),
@@ -225,7 +320,9 @@ fn main() {
 
 fn setup_game(
     mut commands: Commands,
-    mut sudoku_board: ResMut<SudokuBoardResources>,
+    mut active_board: ResMut<ActiveBoard>,
+    mut sudoku_boards: ResMut<SudokuBoardResources>,
+    mut sudoku_snapshots: ResMut<SudokuBoardSnapshotResources>,
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
@@ -235,9 +332,28 @@ fn setup_game(
     let width = 630.;
     let offset = 5.;
 
-    let board = &mut sudoku_board.0;
+    let boards = [
+        (None, vec![SudokuBoard::default()]),
+        (
+            Some(SudokuBoardDifficulty::Easy),
+            vec![SudokuBoard::from_u8(sudoku_samples::easy::FIRST)],
+        ),
+        (
+            Some(SudokuBoardDifficulty::Normal),
+            vec![SudokuBoard::from_u8(sudoku_samples::normal::FIRST)],
+        ),
+    ];
 
-    board.fill_board_u8(sudoku_samples::easy::SECOND).unwrap();
+    for (k, v) in boards {
+        let boards_count = v.len();
+        sudoku_boards.boards.insert(k, v);
+        sudoku_snapshots
+            .boards
+            .insert(k, (0..boards_count).map(|_| Default::default()).collect());
+    }
+
+    active_board.difficulty = Some(SudokuBoardDifficulty::Normal);
+    active_board.index = 0;
 
     spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
 
@@ -484,6 +600,126 @@ fn setup_game(
                 }
             }
         });
+
+    commands.spawn((
+        TextBundle::new_with_layout(
+            "?!",
+            defaults_assets.default_font.clone(),
+            20.,
+            YELLOW,
+            Transform::from_translation(Vec3::default().with_x(155.).with_y(482.)),
+            TextLayout::new(Justify::Left, LineBreak::NoWrap),
+        ),
+        ActiveBoardText,
+    ));
+
+    commands.spawn(TextBundle::new(
+        "Available boards:",
+        defaults_assets.default_font.clone(),
+        20.,
+        YELLOW,
+        Transform::from_translation(Vec3::default().with_xy(vec2(-420., 330.))),
+    ));
+
+    commands.trigger(UpdateBoardList);
+}
+
+fn update_active_board_text(
+    active_board: Res<ActiveBoard>,
+    mut text: Single<&mut Text2d, With<ActiveBoardText>>,
+) {
+    text.0 = format!(
+        "#{} {}",
+        active_board.index + 1,
+        match active_board.difficulty {
+            Some(diff) => diff.to_string(),
+            None => "Unspecified".to_string(),
+        },
+    )
+}
+
+fn update_boards_list(
+    _ev: On<UpdateBoardList>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    active_board: Res<ActiveBoard>,
+    defaults: Res<DefaultMaterials>,
+    defaults_assets: Res<DefaultAssets>,
+    boards: Res<SudokuBoardResources>,
+    info_blocks: Query<Entity, With<BoardInfoBlock>>,
+) {
+    for block in info_blocks.iter() {
+        commands.entity(block).despawn();
+    }
+
+    for (mater_index, (diff, boards)) in boards.boards.iter().enumerate() {
+        for (index, _) in boards.iter().enumerate() {
+            let selected = &active_board.difficulty == diff && index == active_board.index;
+
+            commands
+                .spawn((
+                    Mesh2d(meshes.add(Rectangle::new(150., 30.))),
+                    MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                    Transform::from_translation(
+                        Vec3::default()
+                            .with_xy(vec2(-420., 290. - (((index + mater_index) as f32) * 35.))),
+                    ),
+                    Pickable::default(),
+                    BoardInfoBlock {
+                        difficulty: *diff,
+                        index,
+                    },
+                ))
+                .observe(board_info_block_clicked)
+                .with_children(|builder| {
+                    builder
+                        .spawn((
+                            Mesh2d(meshes.add(Rectangle::new(140., 25.))),
+                            MeshMaterial2d(if selected {
+                                defaults.selected_resolving_block_color.clone()
+                            } else {
+                                defaults.default_block_color.clone()
+                            }),
+                        ))
+                        .with_children(|builder| {
+                            let text_font = TextFont {
+                                font: defaults_assets.default_font.clone(),
+                                font_size: 15.,
+                                ..default()
+                            };
+
+                            builder.spawn((
+                                Text2d::new(format!(
+                                    "#{} {}",
+                                    index + 1,
+                                    match diff {
+                                        Some(diff) => diff.to_string(),
+                                        None => "Unspecified".to_string(),
+                                    },
+                                )),
+                                text_font,
+                                TextColor(defaults.default_base_text_color),
+                                TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                            ));
+                        });
+                });
+        }
+    }
+}
+
+fn board_info_block_clicked(
+    event: On<Pointer<Click>>,
+    mut commands: Commands,
+    mut active_board: ResMut<ActiveBoard>,
+    mut active_board_changed: ResMut<ActiveBoardChanged>,
+    board_info_block: Query<&BoardInfoBlock>,
+) {
+    if let Ok(block_info) = board_info_block.get(event.entity) {
+        active_board.difficulty = block_info.difficulty;
+        active_board.index = block_info.index;
+        active_board_changed.0 = true;
+        commands.trigger(UpdateBoardList);
+    }
 }
 
 fn check_foundation_squares(query: Query<(Entity, &SquareSpawnInfo), With<Foundation>>) {
@@ -506,8 +742,10 @@ fn update_board(
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
     strategy_colors: Res<StrategyMarkerColors>,
-    board: Res<SudokuBoardResources>,
-    mut snapshot: ResMut<SudokuBoardSnapshotResources>,
+    active_board: Res<ActiveBoard>,
+    mut active_board_changed: ResMut<ActiveBoardChanged>,
+    boards: Res<SudokuBoardResources>,
+    mut snapshots: ResMut<SudokuBoardSnapshotResources>,
     mut blocks: Query<
         (
             Entity,
@@ -532,11 +770,13 @@ fn update_board(
     for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
         for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
             let block_index = BlockIndex::new(row, col);
-            let block = board.get_block(&block_index);
-            let snapshot_block = snapshot.get_block(&block_index);
+            let block = boards.active_board(&active_board).get_block(&block_index);
+            let snapshot_block = snapshots
+                .active_board(&active_board)
+                .get_block(&block_index);
             let (j, i) = block_index.actual_indexes();
 
-            if block.status != snapshot_block.status {
+            if (block.status != snapshot_block.status) || active_board_changed.0 {
                 #[cfg(debug_assertions)]
                 println!("Block {:?} seems changed.", &block_index);
 
@@ -685,19 +925,22 @@ fn update_board(
         }
     }
 
+    active_board_changed.0 = false;
     if snapshot_should_update {
-        snapshot.0 = board.0.clone();
+        *snapshots.active_board_mut(&active_board) = boards.active_board(&active_board).clone();
     }
 }
 
 fn final_verification(
     mut commands: Commands,
-    board: Res<SudokuBoardResources>,
+    active_board: Res<ActiveBoard>,
+    boards: Res<SudokuBoardResources>,
     defaults: Res<DefaultMaterials>,
     selected: Res<SelectedBlock>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
+    let board = boards.active_board(&active_board);
     if board
         .get_blocks()
         .filter(|f| f.is_unresolved() || f.is_possibilities())
@@ -761,6 +1004,7 @@ fn change_selected_block(
 fn update_selected_block(
     defaults: Res<DefaultMaterials>,
     selected: Res<SelectedBlock>,
+    active_board: Res<ActiveBoard>,
     board: Res<SudokuBoardResources>,
     game_state: Res<State<GameState>>,
     // mut help_text: Single<&mut Text2d, With<HelpText>>,
@@ -825,7 +1069,9 @@ fn update_selected_block(
         if material.0.id() == defaults.selected_possibilities_block_color.id()
             || material.0.id() == defaults.selected_resolving_block_color.id()
         {
-            let block = board.get_block(&square_index.block_index());
+            let block = board
+                .active_board(&active_board)
+                .get_block(&square_index.block_index());
 
             match &block.conflicting {
                 Some(conflicting) => match conflicting {
@@ -1107,13 +1353,15 @@ fn on_game_input(
     input: On<GameInputs>,
     defaults: Res<DefaultMaterials>,
     mut commands: Commands,
-    mut board: ResMut<SudokuBoardResources>,
+    active_board: Res<ActiveBoard>,
+    mut boards: ResMut<SudokuBoardResources>,
     mut stats: ResMut<Stats>,
     mut selected: ResMut<SelectedBlock>,
-    mut engaging: ResMut<EngagingStrategy>,
+    mut engaging: ResMut<EngagingStrategyMap>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
+    let board = boards.active_board_mut(&active_board);
     match input.event().command_type {
         CommandType::Number(sudoku_number) => {
             let block_index =
@@ -1243,6 +1491,11 @@ fn on_game_input(
         }
         CommandType::Strategy(strategy) => {
             let mut show_only_effect = false;
+            let engaging = engaging
+                .engaging
+                .entry((active_board.difficulty, active_board.index))
+                .or_default();
+
             if engaging.strategy.is_some_and(|f| f == strategy) {
                 // This strategy was engaged before
                 if engaging.showed_effect {

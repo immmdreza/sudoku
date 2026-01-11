@@ -29,4 +29,25 @@ impl TextBundle {
             transform,
         }
     }
+
+    pub fn new_with_layout(
+        text: impl Into<String>,
+        font: impl Into<Handle<Font>>,
+        font_size: f32,
+        color: impl Into<Color>,
+        transform: Transform,
+        layout: TextLayout,
+    ) -> Self {
+        Self {
+            text: Text2d(text.into()),
+            font: TextFont {
+                font: font.into(),
+                font_size,
+                ..Default::default()
+            },
+            color: TextColor(color.into()),
+            layout,
+            transform,
+        }
+    }
 }

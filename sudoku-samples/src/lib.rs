@@ -1,4 +1,5 @@
 pub mod easy;
+pub mod normal;
 
 /// Macro to quickly create a `SudokuBoard` from inline values.
 /// Example usage:
