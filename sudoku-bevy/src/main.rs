@@ -27,6 +27,7 @@ use sudoku_solver::{
 
 use SudokuNumber::*;
 
+#[allow(dead_code)]
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
 enum SudokuBoardDifficulty {
     Easy,
@@ -47,11 +48,26 @@ impl Display for SudokuBoardDifficulty {
     }
 }
 
-#[derive(Debug, Resource, Default)]
-struct ActiveBoard {
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+struct BoardId {
     difficulty: Option<SudokuBoardDifficulty>,
     index: usize,
 }
+
+impl From<(Option<SudokuBoardDifficulty>, usize)> for BoardId {
+    fn from((difficulty, index): (Option<SudokuBoardDifficulty>, usize)) -> Self {
+        Self::new(difficulty, index)
+    }
+}
+
+impl BoardId {
+    fn new(difficulty: Option<SudokuBoardDifficulty>, index: usize) -> Self {
+        Self { difficulty, index }
+    }
+}
+
+#[derive(Debug, Clone, Resource, Default, Deref, DerefMut)]
+struct ActiveBoard(BoardId);
 
 #[derive(Debug, Resource, Default)]
 struct ActiveBoardChanged(bool);
@@ -202,11 +218,35 @@ impl GameInputs {
     }
 }
 
-#[derive(Debug, States, Default, PartialEq, Eq, Hash, Clone)]
-enum GameState {
+#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
+enum BoardState {
     #[default]
     Playing,
     FinishedVerified,
+}
+
+impl BoardState {
+    /// Returns `true` if the board state is [`Playing`].
+    ///
+    /// [`Playing`]: BoardState::Playing
+    #[allow(dead_code)]
+    #[must_use]
+    fn is_playing(&self) -> bool {
+        matches!(self, Self::Playing)
+    }
+
+    /// Returns `true` if the board state is [`FinishedVerified`].
+    ///
+    /// [`FinishedVerified`]: BoardState::FinishedVerified
+    #[must_use]
+    fn is_finished_verified(&self) -> bool {
+        matches!(self, Self::FinishedVerified)
+    }
+}
+
+#[derive(Debug, Resource, Default, Clone, Deref, DerefMut)]
+struct BoardsStateMap {
+    boards: HashMap<BoardId, BoardState>,
 }
 
 #[derive(Debug, Component)]
@@ -229,9 +269,9 @@ struct EngagingStrategy {
     showed_effect: bool,
 }
 
-#[derive(Debug, Resource, Default)]
+#[derive(Debug, Resource, Default, Deref, DerefMut)]
 struct EngagingStrategyMap {
-    engaging: HashMap<(Option<SudokuBoardDifficulty>, usize), EngagingStrategy>,
+    engaging: HashMap<BoardId, EngagingStrategy>,
 }
 
 #[derive(Debug, Event)]
@@ -251,7 +291,7 @@ fn main() {
             Duration::from_millis(100),
             TimerMode::Repeating,
         )))
-        .init_state::<GameState>()
+        .init_resource::<BoardsStateMap>()
         .add_observer(update_boards_list)
         .add_observer(on_game_input)
         // Ready state systems
@@ -290,8 +330,7 @@ fn main() {
                             .or(input_just_pressed(KeyCode::Digit8))
                             .or(input_just_pressed(KeyCode::Digit9)),
                     ),
-                )
-                    .run_if(in_state(GameState::Playing)),
+                ),
                 reset.run_if(input_just_pressed(KeyCode::KeyR)),
             )
                 .run_if(in_state(AppState::Ready)),),
@@ -305,9 +344,7 @@ fn main() {
                         resource_changed::<SudokuBoardResources>
                             .or(resource_changed::<ActiveBoard>),
                     ),
-                    final_verification.run_if(
-                        in_state(GameState::Playing).and(resource_changed::<SudokuBoardResources>),
-                    ),
+                    final_verification.run_if(resource_changed::<SudokuBoardResources>),
                 )
                     .chain(),
                 update_mistakes_text.run_if(resource_changed::<Stats>),
@@ -324,6 +361,7 @@ fn setup_game(
     mut active_board: ResMut<ActiveBoard>,
     mut sudoku_boards: ResMut<SudokuBoardResources>,
     mut sudoku_snapshots: ResMut<SudokuBoardSnapshotResources>,
+    mut boards_state: ResMut<BoardsStateMap>,
     mut meshes: ResMut<Assets<Mesh>>,
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
@@ -351,6 +389,11 @@ fn setup_game(
         sudoku_snapshots
             .boards
             .insert(k, (0..boards_count).map(|_| Default::default()).collect());
+        (0..boards_count).for_each(|i| {
+            boards_state
+                .boards
+                .insert((k, i).into(), Default::default());
+        });
     }
 
     active_board.difficulty = Some(SudokuBoardDifficulty::Normal);
@@ -401,20 +444,20 @@ fn setup_game(
                 .spawn((
                     Mesh2d(meshes.add(Rectangle::new(610., 90.))),
                     MeshMaterial2d(defaults.default_block_color.clone()),
+                    Transform::from_translation(Vec3::Z),
                 ))
                 .with_children(|builder| {
-                    let text_font = TextFont {
-                        font: defaults_assets.default_font.clone(),
-                        font_size: 20.,
-                        ..default()
-                    };
-
                     builder.spawn((
                         Text2d::new(DEFAULT_HELP_TEXT.to_string()),
-                        text_font,
+                        TextFont {
+                            font: defaults_assets.default_font.clone(),
+                            font_size: 20.,
+                            ..default()
+                        },
                         TextColor(defaults.default_base_text_color),
                         TextLayout::new(Justify::Center, LineBreak::WordBoundary),
                         TextBounds::new(600., 80.),
+                        Transform::from_translation(Vec3::Z),
                         HelpText,
                     ));
                 });
@@ -648,6 +691,7 @@ fn update_boards_list(
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
     boards: Res<SudokuBoardResources>,
+    boards_state: Res<BoardsStateMap>,
     info_blocks: Query<Entity, With<BoardInfoBlock>>,
 ) {
     for block in info_blocks.iter() {
@@ -657,14 +701,17 @@ fn update_boards_list(
     for (mater_index, (diff, boards)) in boards.boards.iter().enumerate() {
         for (index, _) in boards.iter().enumerate() {
             let selected = &active_board.difficulty == diff && index == active_board.index;
+            let finished = boards_state
+                .get(&BoardId::new(*diff, index))
+                .is_some_and(|f| f.is_finished_verified());
 
             commands
                 .spawn((
-                    Mesh2d(meshes.add(Rectangle::new(150., 30.))),
+                    Mesh2d(meshes.add(Rectangle::new(180., 50.))),
                     MeshMaterial2d(defaults.default_foundation_block_color.clone()),
                     Transform::from_translation(
                         Vec3::default()
-                            .with_xy(vec2(-420., 290. - (((index + mater_index) as f32) * 35.))),
+                            .with_xy(vec2(-420., 286. - (((index + mater_index) as f32) * 55.))),
                     ),
                     Pickable::default(),
                     BoardInfoBlock {
@@ -676,20 +723,19 @@ fn update_boards_list(
                 .with_children(|builder| {
                     builder
                         .spawn((
-                            Mesh2d(meshes.add(Rectangle::new(140., 25.))),
+                            Mesh2d(meshes.add(Rectangle::new(170., 45.))),
                             MeshMaterial2d(if selected {
                                 defaults.selected_resolving_block_color.clone()
                             } else {
-                                defaults.default_block_color.clone()
+                                if finished {
+                                    defaults.default_solved_block_color.clone()
+                                } else {
+                                    defaults.default_block_color.clone()
+                                }
                             }),
+                            Transform::from_translation(Vec3::Z),
                         ))
                         .with_children(|builder| {
-                            let text_font = TextFont {
-                                font: defaults_assets.default_font.clone(),
-                                font_size: 15.,
-                                ..default()
-                            };
-
                             builder.spawn((
                                 Text2d::new(format!(
                                     "#{} {}",
@@ -699,9 +745,14 @@ fn update_boards_list(
                                         None => "Unspecified".to_string(),
                                     },
                                 )),
-                                text_font,
+                                TextFont {
+                                    font: defaults_assets.default_font.clone(),
+                                    font_size: 20.,
+                                    ..default()
+                                },
                                 TextColor(defaults.default_base_text_color),
                                 TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                                Transform::from_translation(Vec3::Z),
                             ));
                         });
                 });
@@ -747,6 +798,7 @@ fn update_board(
     active_board: Res<ActiveBoard>,
     mut active_board_changed: ResMut<ActiveBoardChanged>,
     boards: Res<SudokuBoardResources>,
+    boards_state: Res<BoardsStateMap>,
     mut snapshots: ResMut<SudokuBoardSnapshotResources>,
     mut blocks: Query<
         (
@@ -777,6 +829,7 @@ fn update_board(
                 .active_board(&active_board)
                 .get_block(&block_index);
             let (j, i) = block_index.actual_indexes();
+            let board_state = boards_state.boards.get(&active_board);
 
             if (block.status != snapshot_block.status) || active_board_changed.0 {
                 #[cfg(debug_assertions)]
@@ -784,10 +837,25 @@ fn update_board(
 
                 snapshot_should_update = true;
 
-                if let Some((entity, spawn_info, _, _)) = blocks.iter().find(|(_, _, index, _)| {
-                    let index = index.actual_index();
-                    index.0 == i && index.1 == j
-                }) {
+                if let Some((entity, spawn_info, _, mut material)) =
+                    blocks.iter_mut().find(|(_, _, index, _)| {
+                        let index = index.actual_index();
+                        index.0 == i && index.1 == j
+                    })
+                {
+                    if let Some(state) = board_state {
+                        println!("Board has state.");
+                        match (state, &block.status) {
+                            (BoardState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
+                                material.0 = defaults.default_solved_block_color.clone();
+                            }
+                            (_, _) => {
+                                println!("Playing.");
+                                material.0 = defaults.default_block_color.clone();
+                            }
+                        }
+                    }
+
                     commands.entity(entity).despawn_children();
 
                     match &block.status {
@@ -795,7 +863,6 @@ fn update_board(
                         SudokuBlockStatus::Fixed(sudoku_number)
                         | SudokuBlockStatus::Resolved(sudoku_number) => {
                             text_font.font_size = spawn_info.width;
-
                             commands.entity(entity).with_child((
                                 Text2d::new(format!("{}", sudoku_number.to_u8())),
                                 text_font.clone(),
@@ -934,9 +1001,9 @@ fn update_board(
 }
 
 fn final_verification(
-    mut commands: Commands,
     active_board: Res<ActiveBoard>,
     boards: Res<SudokuBoardResources>,
+    mut boards_state: ResMut<BoardsStateMap>,
     defaults: Res<DefaultMaterials>,
     selected: Res<SelectedBlock>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
@@ -950,7 +1017,9 @@ fn final_verification(
         == 0
     {
         if board.verify_board() {
-            commands.set_state(GameState::FinishedVerified);
+            if let Some(state) = boards_state.boards.get_mut(&active_board) {
+                *state = BoardState::FinishedVerified;
+            }
 
             help_text.0 =
                 "The sudoku board solved successfully!\nYou can try resetting.".to_string();
@@ -1008,7 +1077,7 @@ fn update_selected_block(
     selected: Res<SelectedBlock>,
     active_board: Res<ActiveBoard>,
     board: Res<SudokuBoardResources>,
-    game_state: Res<State<GameState>>,
+    boards_state: Res<BoardsStateMap>,
     // mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
@@ -1087,18 +1156,22 @@ fn update_selected_block(
                         material.0 = defaults.conflicting_affected_color.clone();
                     }
                 },
-                None => match game_state.get() {
-                    GameState::Playing => {
-                        material.0 = defaults.default_block_color.clone();
-                    }
-                    GameState::FinishedVerified => {
-                        if block.is_resolved() {
-                            material.0 = defaults.default_solved_block_color.clone();
-                        } else {
-                            material.0 = defaults.default_block_color.clone();
+                None => {
+                    if let Some(state) = boards_state.boards.get(&active_board) {
+                        match state {
+                            BoardState::Playing => {
+                                material.0 = defaults.default_block_color.clone();
+                            }
+                            BoardState::FinishedVerified => {
+                                if block.is_resolved() {
+                                    material.0 = defaults.default_solved_block_color.clone();
+                                } else {
+                                    material.0 = defaults.default_block_color.clone();
+                                }
+                            }
                         }
                     }
-                },
+                }
             }
         }
     }
@@ -1354,9 +1427,9 @@ fn on_helper_block_clicked(
 fn on_game_input(
     input: On<GameInputs>,
     defaults: Res<DefaultMaterials>,
-    mut commands: Commands,
     active_board: Res<ActiveBoard>,
     mut boards: ResMut<SudokuBoardResources>,
+    mut boards_state: ResMut<BoardsStateMap>,
     mut stats: ResMut<Stats>,
     mut selected: ResMut<SelectedBlock>,
     mut engaging: ResMut<EngagingStrategyMap>,
@@ -1364,8 +1437,15 @@ fn on_game_input(
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
     let board = boards.active_board_mut(&active_board);
+    let board_state = boards_state.boards.get_mut(&active_board);
+
     match input.event().command_type {
         CommandType::Number(sudoku_number) => {
+            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+                // Board in finished state do nothing.
+                return;
+            }
+
             let block_index =
                 BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
             let block = board.get_block_mut(&block_index);
@@ -1414,11 +1494,21 @@ fn on_game_input(
             }
         }
         CommandType::CalculatePossibilities => {
+            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+                // Board in finished state do nothing.
+                return;
+            }
+
             #[cfg(debug_assertions)]
             println!("Updating possibilities.");
             board.update_possibilities();
         }
         CommandType::ResolveNakedSingles => {
+            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+                // Board in finished state do nothing.
+                return;
+            }
+
             #[cfg(debug_assertions)]
             println!("Resolving satisfied blocks (Naked single).");
             board.resolve_satisfied_blocks();
@@ -1427,7 +1517,10 @@ fn on_game_input(
             #[cfg(debug_assertions)]
             println!("Resetting.");
             board.reset();
-            commands.set_state(GameState::Playing);
+
+            if let Some(state) = board_state {
+                *state = BoardState::Playing;
+            }
 
             help_text.0 = DEFAULT_HELP_TEXT.to_string();
             board.get_blocks().filter_unresolved().for_each(|f| {
@@ -1447,6 +1540,11 @@ fn on_game_input(
             };
         }
         CommandType::ClearBlock => {
+            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+                // Board in finished state do nothing.
+                return;
+            }
+
             let block_index =
                 BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
             let block = board.get_block_mut(&block_index);
@@ -1492,11 +1590,13 @@ fn on_game_input(
             };
         }
         CommandType::Strategy(strategy) => {
+            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+                // Board in finished state do nothing.
+                return;
+            }
+
             let mut show_only_effect = false;
-            let engaging = engaging
-                .engaging
-                .entry((active_board.difficulty, active_board.index))
-                .or_default();
+            let engaging = engaging.engaging.entry(active_board.0).or_default();
 
             if engaging.strategy.is_some_and(|f| f == strategy) {
                 // This strategy was engaged before
@@ -1613,7 +1713,7 @@ impl SquareBundle {
             transform: Transform::default().with_translation(Vec3 {
                 x: spawn_info.translation.x,
                 y: spawn_info.translation.y,
-                ..Default::default()
+                z: 1.,
             }),
             index: SquareIndex {
                 i: spawn_info.index.0,
