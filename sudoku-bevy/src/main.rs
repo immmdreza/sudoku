@@ -255,11 +255,11 @@ struct HelpText;
 #[derive(Debug, Component)]
 struct ActiveBoardText;
 
+#[derive(Debug, Component, Deref, DerefMut)]
+struct BoardInfoBlock(BoardId);
+
 #[derive(Debug, Component)]
-struct BoardInfoBlock {
-    difficulty: Option<SudokuBoardDifficulty>,
-    index: usize,
-}
+struct RequestNewBoardBlock;
 
 const DEFAULT_HELP_TEXT: &str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
 
@@ -513,7 +513,7 @@ fn setup_game(
                     ))
                     .observe(on_helper_block_clicked)
                     .observe(on_helper_block_hovered)
-                    .observe(on_helper_block_out);
+                    .observe(on_pointer_out);
             }
         });
 
@@ -578,7 +578,7 @@ fn setup_game(
                     ))
                     .observe(on_helper_block_clicked)
                     .observe(on_helper_block_hovered)
-                    .observe(on_helper_block_out);
+                    .observe(on_pointer_out);
             }
         });
 
@@ -640,7 +640,7 @@ fn setup_game(
                         ))
                         .observe(on_helper_block_clicked)
                         .observe(on_helper_block_hovered)
-                        .observe(on_helper_block_out);
+                        .observe(on_pointer_out);
                 }
             }
         });
@@ -693,33 +693,42 @@ fn update_boards_list(
     boards: Res<SudokuBoardResources>,
     boards_state: Res<BoardsStateMap>,
     info_blocks: Query<Entity, With<BoardInfoBlock>>,
+    rnb_block: Query<Entity, With<RequestNewBoardBlock>>,
 ) {
+    if let Ok(rnb) = rnb_block.single() {
+        commands.entity(rnb).despawn();
+    }
+
     for block in info_blocks.iter() {
         commands.entity(block).despawn();
     }
 
-    for (mater_index, (diff, boards)) in boards.boards.iter().enumerate() {
+    let mut font = TextFont {
+        font: defaults_assets.default_font.clone(),
+        font_size: 20.,
+        ..default()
+    };
+
+    let mut latest_y = 286. + 55.;
+    for (diff, boards) in boards.boards.iter() {
         for (index, _) in boards.iter().enumerate() {
             let selected = &active_board.difficulty == diff && index == active_board.index;
             let finished = boards_state
                 .get(&BoardId::new(*diff, index))
                 .is_some_and(|f| f.is_finished_verified());
 
+            latest_y -= 55.;
             commands
                 .spawn((
                     Mesh2d(meshes.add(Rectangle::new(180., 50.))),
                     MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-                    Transform::from_translation(
-                        Vec3::default()
-                            .with_xy(vec2(-420., 286. - (((index + mater_index) as f32) * 55.))),
-                    ),
+                    Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y))),
                     Pickable::default(),
-                    BoardInfoBlock {
-                        difficulty: *diff,
-                        index,
-                    },
+                    BoardInfoBlock(BoardId::new(*diff, index)),
                 ))
                 .observe(board_info_block_clicked)
+                .observe(board_info_block_over)
+                .observe(on_pointer_out)
                 .with_children(|builder| {
                     builder
                         .spawn((
@@ -745,11 +754,7 @@ fn update_boards_list(
                                         None => "Unspecified".to_string(),
                                     },
                                 )),
-                                TextFont {
-                                    font: defaults_assets.default_font.clone(),
-                                    font_size: 20.,
-                                    ..default()
-                                },
+                                font.clone(),
                                 TextColor(defaults.default_base_text_color),
                                 TextLayout::new(Justify::Center, LineBreak::NoWrap),
                                 Transform::from_translation(Vec3::Z),
@@ -758,6 +763,66 @@ fn update_boards_list(
                 });
         }
     }
+
+    font.font_size = 40.;
+    commands
+        .spawn((
+            Mesh2d(meshes.add(Rectangle::new(50., 50.))),
+            MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+            Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y - 55.))),
+            Pickable::default(),
+            RequestNewBoardBlock,
+        ))
+        .observe(request_new_board)
+        .observe(request_new_board_over)
+        .observe(on_pointer_out)
+        .with_children(|builder| {
+            builder
+                .spawn((
+                    Mesh2d(meshes.add(Rectangle::new(45., 45.))),
+                    MeshMaterial2d(defaults.default_block_color.clone()),
+                    Transform::from_translation(Vec3::Z),
+                ))
+                .with_children(|builder| {
+                    builder.spawn((
+                        Text2d::new("+".to_string()),
+                        font,
+                        TextColor(defaults.default_base_text_color),
+                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                        Transform::from_translation(Vec3::Z),
+                    ));
+                });
+        });
+}
+
+fn request_new_board(
+    _ev: On<Pointer<Click>>,
+    mut commands: Commands,
+    mut boards: ResMut<SudokuBoardResources>,
+    mut snapshots: ResMut<SudokuBoardSnapshotResources>,
+    mut boards_state: ResMut<BoardsStateMap>,
+    mut active_board: ResMut<ActiveBoard>,
+    mut active_board_changed: ResMut<ActiveBoardChanged>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    let default = boards.boards.entry(None).or_default();
+
+    if default.len() >= 3 {
+        help_text.0 = "Can't add more than 3.".to_string();
+        return;
+    }
+
+    default.push(Default::default());
+    let default_snapshots = snapshots.boards.entry(None).or_default();
+    default_snapshots.push(Default::default());
+
+    let id = BoardId::new(None, default.len() - 1);
+    boards_state.boards.insert(id, Default::default());
+    active_board.0 = id;
+
+    active_board_changed.0 = true;
+
+    commands.trigger(UpdateBoardList);
 }
 
 fn board_info_block_clicked(
@@ -773,6 +838,34 @@ fn board_info_block_clicked(
         active_board_changed.0 = true;
         commands.trigger(UpdateBoardList);
     }
+}
+
+fn board_info_block_over(
+    event: On<Pointer<Over>>,
+    board_info_block: Query<&BoardInfoBlock>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    if let Ok(block_info) = board_info_block.get(event.entity) {
+        help_text.0 = format!(
+            "Will switch to board: #{} {}.",
+            block_info.index + 1,
+            match block_info.difficulty {
+                Some(diff) => diff.to_string(),
+                None => "Unspecified".to_string(),
+            },
+        );
+    }
+}
+
+fn request_new_board_over(
+    _ev: On<Pointer<Over>>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    help_text.0 = "Will create a new board.".to_string();
+}
+
+fn on_pointer_out(_ev: On<Pointer<Out>>, mut help_text: Single<&mut Text2d, With<HelpText>>) {
+    help_text.0 = DEFAULT_HELP_TEXT.to_string();
 }
 
 fn check_foundation_squares(query: Query<(Entity, &SquareSpawnInfo), With<Foundation>>) {
@@ -1678,16 +1771,6 @@ fn on_helper_block_hovered(
         };
 
         help_text.0 = new_help_text;
-    }
-}
-
-fn on_helper_block_out(
-    over: On<Pointer<Out>>,
-    indexes: Query<&HelperBlock>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
-) {
-    if indexes.get(over.entity).is_ok() {
-        help_text.0 = DEFAULT_HELP_TEXT.to_string();
     }
 }
 
