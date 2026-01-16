@@ -342,7 +342,6 @@ fn main() {
         .add_systems(
             PostUpdate,
             (
-                update_selected_block.run_if(resource_changed::<SelectedBlock>),
                 (
                     update_board.run_if(
                         resource_changed::<SudokuBoardResources>
@@ -929,6 +928,13 @@ fn on_should_update_event(
                 should_updates.retain(|x| x != block_index);
             }
         }
+        ShouldUpdateEvent::AddMany(items) => {
+            for block_index in items {
+                if !should_updates.contains(block_index) {
+                    should_updates.push(block_index.clone());
+                }
+            }
+        }
     }
 }
 
@@ -936,6 +942,7 @@ fn on_should_update_event(
 enum ShouldUpdateEvent {
     Clear,
     Add(BlockIndex),
+    AddMany(Vec<BlockIndex>),
     #[allow(dead_code)]
     Remove(BlockIndex),
 }
@@ -1137,6 +1144,15 @@ fn update_board(
                         }
                     }
                 }
+
+                if selected.current == (i, j) {
+                    material.0 = match selected.mode {
+                        SelectionMode::Resolving => defaults.selected_resolving_block_color.clone(),
+                        SelectionMode::Possibilities => {
+                            defaults.selected_possibilities_block_color.clone()
+                        }
+                    };
+                }
             }
 
             #[cfg(debug_assertions)]
@@ -1225,61 +1241,43 @@ fn change_selected_block(
     }
 }
 
-fn update_selected_block(
-    defaults: Res<DefaultMaterials>,
-    selected: Res<SelectedBlock>,
-    // mut help_text: Single<&mut Text2d, With<HelpText>>,
-    mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
-    board_blocks: Single<&BlocksAccessInfo, With<SudokuBoardMarker>>,
-) {
-    let block_entity = board_blocks.get(&selected.block_index());
-    if let Some((_, mut material)) = block_entity.map(|e| blocks.get_mut(*e).ok()).flatten() {
-        // This is selected block
-        //TODO -
-        // let index = index.actual_index();
-        // let index = BlockIndex::from_index(index.1, index.0).unwrap();
-        // let block = board.get_block(&index);
+//TODO -
+// let index = index.actual_index();
+// let index = BlockIndex::from_index(index.1, index.0).unwrap();
+// let block = board.get_block(&index);
 
-        // let text = format!(
-        //     "This is block {:?}. {}",
-        //     (index.actual_indexes()),
-        //     match &block.status {
-        //         SudokuBlockStatus::Unresolved => format!(
-        //             "This block is empty, Use number to resolve or put a possibility onto it"
-        //         ),
-        //         SudokuBlockStatus::Fixed(sudoku_number) => format!(
-        //             "This is a fixed block with number {}. This means you can't mess around with this one.",
-        //             sudoku_number.to_u8()
-        //         ),
-        //         SudokuBlockStatus::Resolved(sudoku_number) => format!(
-        //             "The number {} is placed here. {}",
-        //             sudoku_number.to_u8(),
-        //             match &block.conflicting {
-        //                 Some(conflicting) => match conflicting {
-        //                     Conflicting::AffectedBy(_) => format!(""),
-        //                     Conflicting::AffectedByPossibilities {
-        //                         block_index: _,
-        //                         number: _,
-        //                     } => format!(""),
-        //                     Conflicting::Source =>
-        //                         format!("But this number you out in here caused conflicting."),
-        //                 },
-        //                 None =>
-        //                     format!("The number is currently ok, but you can always change it."),
-        //             }
-        //         ),
-        //         SudokuBlockStatus::Possibilities(_) =>
-        //             format!("This is block of possibilities. (Quantum block!)"),
-        //     }
-        // );
-
-        // help_text.0 = text;
-        material.0 = match selected.mode {
-            SelectionMode::Resolving => defaults.selected_resolving_block_color.clone(),
-            SelectionMode::Possibilities => defaults.selected_possibilities_block_color.clone(),
-        };
-    }
-}
+// let text = format!(
+//     "This is block {:?}. {}",
+//     (index.actual_indexes()),
+//     match &block.status {
+//         SudokuBlockStatus::Unresolved => format!(
+//             "This block is empty, Use number to resolve or put a possibility onto it"
+//         ),
+//         SudokuBlockStatus::Fixed(sudoku_number) => format!(
+//             "This is a fixed block with number {}. This means you can't mess around with this one.",
+//             sudoku_number.to_u8()
+//         ),
+//         SudokuBlockStatus::Resolved(sudoku_number) => format!(
+//             "The number {} is placed here. {}",
+//             sudoku_number.to_u8(),
+//             match &block.conflicting {
+//                 Some(conflicting) => match conflicting {
+//                     Conflicting::AffectedBy(_) => format!(""),
+//                     Conflicting::AffectedByPossibilities {
+//                         block_index: _,
+//                         number: _,
+//                     } => format!(""),
+//                     Conflicting::Source =>
+//                         format!("But this number you out in here caused conflicting."),
+//                 },
+//                 None =>
+//                     format!("The number is currently ok, but you can always change it."),
+//             }
+//         ),
+//         SudokuBlockStatus::Possibilities(_) =>
+//             format!("This is block of possibilities. (Quantum block!)"),
+//     }
+// );
 
 fn update_possibilities(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
     if keyboard_input.just_pressed(KeyCode::Space) {
@@ -1381,7 +1379,10 @@ fn on_block_clicked(
         if selected.current != index {
             let pervious_selection = selected.block_index();
             selected.current = index;
-            commands.trigger(ShouldUpdateEvent::Add(pervious_selection));
+            commands.trigger(ShouldUpdateEvent::AddMany(vec![
+                selected.block_index(),
+                pervious_selection,
+            ]));
         }
     }
 }
@@ -1553,7 +1554,10 @@ fn on_game_input(
                 }
             };
 
-            commands.trigger(ShouldUpdateEvent::Add(pervious_selection));
+            commands.trigger(ShouldUpdateEvent::AddMany(vec![
+                selected.block_index(),
+                pervious_selection,
+            ]));
         }
         CommandType::Strategy(strategy) => {
             if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
