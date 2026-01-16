@@ -95,6 +95,11 @@ impl Plugin for LoadingPlugin {
                 }),
                 ..Default::default()
             }),
+            // .set(LogPlugin {
+            //     filter: "warn,sudoku-bevy=trace".to_string(), //specific filters
+            //     level: Level::TRACE, //Change this to be globally change levels
+            //     ..Default::default()
+            // }),
             MeshPickingPlugin,
             PanCamPlugin,
         ))

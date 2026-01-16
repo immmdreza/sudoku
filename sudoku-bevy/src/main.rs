@@ -9,15 +9,19 @@ use std::{
 use bevy::{
     color::palettes::css::{BLACK, RED, WHITE, YELLOW},
     input::common_conditions::{input_just_pressed, input_pressed},
+    log::{self},
     prelude::*,
     sprite::Anchor,
     text::TextBounds,
 };
-use sudoku_bevy::plugins::{
-    loading_plugin::{
-        AppState, DefaultAssets, DefaultMaterials, LoadingPlugin, StrategyMarkerColors,
+use sudoku_bevy::{
+    BlocksAccessInfo, SquareIndex,
+    plugins::{
+        loading_plugin::{
+            AppState, DefaultAssets, DefaultMaterials, LoadingPlugin, StrategyMarkerColors,
+        },
+        shared::TextBundle,
     },
-    shared::TextBundle,
 };
 use sudoku_solver::{
     BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
@@ -25,10 +29,8 @@ use sudoku_solver::{
     strategies::{Strategy, hidden_single::HiddenSingleStrategy, naked_pair::NakedPairStrategy},
 };
 
-use SudokuNumber::*;
-
 #[allow(dead_code)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 enum SudokuBoardDifficulty {
     Easy,
     #[default]
@@ -277,6 +279,9 @@ struct EngagingStrategyMap {
 #[derive(Debug, Event)]
 struct UpdateBoardList;
 
+#[derive(Debug, Component)]
+struct SudokuBoardMarker;
+
 fn main() {
     App::new()
         .add_plugins(LoadingPlugin)
@@ -292,15 +297,14 @@ fn main() {
             TimerMode::Repeating,
         )))
         .init_resource::<BoardsStateMap>()
+        .init_resource::<ShouldUpdateAnyway>()
         .add_observer(update_boards_list)
         .add_observer(on_game_input)
+        .add_observer(on_should_update_event)
         // Ready state systems
-        .add_systems(OnEnter(AppState::Ready), setup_game)
         .add_systems(
-            PostStartup,
-            (check_foundation_squares, check_block_squares)
-                .chain()
-                .run_if(in_state(AppState::Ready)),
+            OnEnter(AppState::Ready),
+            (setup_game, check_foundation_squares, check_block_squares).chain(),
         )
         .add_systems(
             Update,
@@ -342,7 +346,8 @@ fn main() {
                 (
                     update_board.run_if(
                         resource_changed::<SudokuBoardResources>
-                            .or(resource_changed::<ActiveBoard>),
+                            .or(resource_changed::<ActiveBoard>)
+                            .or(resource_changed::<ShouldUpdateAnyway>),
                     ),
                     final_verification.run_if(resource_changed::<SudokuBoardResources>),
                 )
@@ -367,7 +372,8 @@ fn setup_game(
     defaults_assets: Res<DefaultAssets>,
     strategy_colors: Res<StrategyMarkerColors>,
 ) {
-    let center = vec2(0., -50.);
+    log::warn!("Death is close.");
+
     let width = 630.;
     let offset = 5.;
 
@@ -399,7 +405,14 @@ fn setup_game(
     active_board.difficulty = Some(SudokuBoardDifficulty::Normal);
     active_board.index = 0;
 
-    spawn_sudoku_board(&mut commands, &mut meshes, &defaults, center, width, offset);
+    spawn_sudoku_board(
+        &mut commands,
+        &mut meshes,
+        &defaults,
+        Default::default(),
+        width,
+        offset,
+    );
 
     commands.spawn(TextBundle::new(
         "Sudoku",
@@ -710,7 +723,11 @@ fn update_boards_list(
     };
 
     let mut latest_y = 286. + 55.;
-    for (diff, boards) in boards.boards.iter() {
+
+    let mut items = boards.boards.iter().collect::<Vec<_>>();
+    items.sort_by_key(|x| x.0);
+
+    for (diff, boards) in items {
         for (index, _) in boards.iter().enumerate() {
             let selected = &active_board.difficulty == diff && index == active_board.index;
             let finished = boards_state
@@ -869,18 +886,63 @@ fn on_pointer_out(_ev: On<Pointer<Out>>, mut help_text: Single<&mut Text2d, With
 }
 
 fn check_foundation_squares(query: Query<(Entity, &SquareSpawnInfo), With<Foundation>>) {
-    println!("Foundation squares:");
+    log::info!("Foundation squares:");
     for (i, (_, index)) in query.iter().enumerate() {
-        println!("{}- {:?}", i + 1, index.index)
+        log::info!("{}- {:?}", i + 1, index.index)
     }
 }
 
 fn check_block_squares(query: Query<(Entity, &SquareIndex), With<Block>>) {
-    println!("Block squares:");
+    log::info!("Block squares:");
     for (i, (_, index)) in query.iter().enumerate() {
-        println!("{}- {:?} (index: {:?})", i + 1, index, index.actual_index())
+        log::info!("{}- {:?} (index: {:?})", i + 1, index, index.actual_index())
     }
 }
+
+// fn get_board_block_mut<'w, 's, D: QueryData>(
+//     blocks: &'w mut Query<'w, 's, D, With<Block>>,
+//     access_infos: &BlocksAccessInfo,
+//     block_index: &BlockIndex,
+// ) -> Option<D::Item<'w, 's>>
+// where
+//     's: 'w,
+// {
+//     let block_entity = access_infos.get(&block_index)?;
+//     blocks.get_mut(*block_entity).ok()
+// }
+
+fn on_should_update_event(
+    event: On<ShouldUpdateEvent>,
+    mut should_updates: ResMut<ShouldUpdateAnyway>,
+) {
+    match event.event() {
+        ShouldUpdateEvent::Clear => {
+            should_updates.clear();
+        }
+        ShouldUpdateEvent::Add(block_index) => {
+            if !should_updates.contains(block_index) {
+                should_updates.push(block_index.clone());
+            }
+        }
+        ShouldUpdateEvent::Remove(block_index) => {
+            if should_updates.contains(block_index) {
+                should_updates.retain(|x| x != block_index);
+            }
+        }
+    }
+}
+
+#[derive(Debug, Event)]
+enum ShouldUpdateEvent {
+    Clear,
+    Add(BlockIndex),
+    #[allow(dead_code)]
+    Remove(BlockIndex),
+}
+
+//TODO - Update later to reflect many `SudokuBoardMarker`s.
+#[derive(Debug, Resource, Deref, DerefMut, Default)]
+struct ShouldUpdateAnyway(Vec<BlockIndex>);
 
 fn update_board(
     mut commands: Commands,
@@ -893,15 +955,9 @@ fn update_board(
     boards: Res<SudokuBoardResources>,
     boards_state: Res<BoardsStateMap>,
     mut snapshots: ResMut<SudokuBoardSnapshotResources>,
-    mut blocks: Query<
-        (
-            Entity,
-            &SquareSpawnInfo,
-            &SquareIndex,
-            &mut MeshMaterial2d<ColorMaterial>,
-        ),
-        With<Block>,
-    >,
+    mut blocks: Query<(Entity, &SquareSpawnInfo, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
+    board_blocks: Single<&BlocksAccessInfo, With<SudokuBoardMarker>>,
+    should_updates: Res<ShouldUpdateAnyway>,
     selected: Res<SelectedBlock>,
 ) {
     #[cfg(debug_assertions)]
@@ -914,43 +970,50 @@ fn update_board(
         ..default()
     };
 
-    for row in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
-        for col in [One, Two, Three, Four, Five, Six, Seven, Eight, Nine] {
-            let block_index = BlockIndex::new(row, col);
-            let block = boards.active_board(&active_board).get_block(&block_index);
-            let snapshot_block = snapshots
-                .active_board(&active_board)
-                .get_block(&block_index);
-            let (j, i) = block_index.actual_indexes();
-            let board_state = boards_state.boards.get(&active_board);
+    for (row, col) in SudokuNumber::iter_numbers() {
+        let block_index = BlockIndex::new(row, col);
+        let block = boards.active_board(&active_board).get_block(&block_index);
+        let snapshot_block = snapshots
+            .active_board(&active_board)
+            .get_block(&block_index);
 
-            if (block.status != snapshot_block.status) || active_board_changed.0 {
-                #[cfg(debug_assertions)]
-                println!("Block {:?} seems changed.", &block_index);
+        if (block != snapshot_block)
+            || active_board_changed.0
+            || should_updates.contains(&block_index)
+        {
+            #[cfg(debug_assertions)]
+            println!("Block {:?} seems changed.", &block_index);
 
-                snapshot_should_update = true;
+            snapshot_should_update = true;
 
-                if let Some((entity, spawn_info, _, mut material)) =
-                    blocks.iter_mut().find(|(_, _, index, _)| {
-                        let index = index.actual_index();
-                        index.0 == i && index.1 == j
-                    })
+            let block_entity = board_blocks.get(&block_index);
+            if let Some((entity, spawn_info, mut material)) =
+                block_entity.map(|e| blocks.get_mut(*e).ok()).flatten()
+            {
+                let (j, i) = block_index.actual_indexes();
+
+                // Update blocks based on finished or not
+                let board_state = boards_state.boards.get(&active_board);
+                if let Some(state) = board_state
+                    && selected.current != (i, j)
                 {
-                    if let Some(state) = board_state {
-                        println!("Board has state.");
-                        match (state, &block.status) {
-                            (BoardState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
-                                material.0 = defaults.default_solved_block_color.clone();
-                            }
-                            (_, _) => {
-                                println!("Playing.");
-                                material.0 = defaults.default_block_color.clone();
-                            }
+                    #[cfg(debug_assertions)]
+                    println!("Board has state.");
+                    match (state, &block.status) {
+                        (BoardState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
+                            material.0 = defaults.default_solved_block_color.clone();
+                        }
+                        (_, _) => {
+                            #[cfg(debug_assertions)]
+                            println!("Playing.");
+                            material.0 = defaults.default_block_color.clone();
                         }
                     }
+                }
 
+                // Regular block update.
+                if block.status != snapshot_block.status {
                     commands.entity(entity).despawn_children();
-
                     match &block.status {
                         SudokuBlockStatus::Unresolved => (),
                         SudokuBlockStatus::Fixed(sudoku_number)
@@ -986,10 +1049,9 @@ fn update_board(
                                     .collect::<Vec<_>>();
 
                                 for spawn_info in square_group_info(width, 2., Default::default()) {
-                                    if let Some((the_number, number, _, _)) =
-                                        numbers.iter().find(|(_, _, i, j)| {
-                                            i == &spawn_info.index.1 && j == &spawn_info.index.0
-                                        })
+                                    if let Some((the_number, number, _, _)) = numbers
+                                        .iter()
+                                        .find(|(_, _, i, j)| spawn_info.index == (*j, *i))
                                     {
                                         text_font.font_size = spawn_info.width;
 
@@ -1056,37 +1118,35 @@ fn update_board(
                     }
                 }
 
-                #[cfg(debug_assertions)]
-                println!("Updated ({:?}, {:?})", row, col);
-            }
-
-            if block.conflicting != snapshot_block.conflicting
-                && selected.current != (i, j)
-                && let Some((_, _, _, mut material)) = blocks.iter_mut().find(|(_, _, index, _)| {
-                    let index = index.actual_index();
-                    index.0 == i && index.1 == j
-                })
-            {
-                match &block.conflicting {
-                    Some(conflicting) => match conflicting {
-                        sudoku_solver::Conflicting::AffectedBy(_) => {
-                            material.0 = defaults.conflicting_affected_color.clone();
+                // Update blocks based on conflicts.
+                if block.conflicting != snapshot_block.conflicting && selected.current != (i, j) {
+                    match &block.conflicting {
+                        Some(conflicting) => match conflicting {
+                            sudoku_solver::Conflicting::AffectedBy(_) => {
+                                material.0 = defaults.conflicting_affected_color.clone();
+                            }
+                            sudoku_solver::Conflicting::Source => {
+                                material.0 = defaults.conflicting_source_color.clone();
+                            }
+                            sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
+                                material.0 = defaults.conflicting_affected_color.clone();
+                            }
+                        },
+                        None => {
+                            material.0 = defaults.default_block_color.clone();
                         }
-                        sudoku_solver::Conflicting::Source => {
-                            material.0 = defaults.conflicting_source_color.clone();
-                        }
-                        sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
-                            material.0 = defaults.conflicting_affected_color.clone();
-                        }
-                    },
-                    None => {
-                        material.0 = defaults.default_block_color.clone();
                     }
                 }
             }
+
+            #[cfg(debug_assertions)]
+            println!("Updated ({:?}, {:?})", row, col);
         }
     }
 
+    if !should_updates.is_empty() {
+        commands.trigger(ShouldUpdateEvent::Clear);
+    }
     active_board_changed.0 = false;
     if snapshot_should_update {
         *snapshots.active_board_mut(&active_board) = boards.active_board(&active_board).clone();
@@ -1101,6 +1161,7 @@ fn final_verification(
     selected: Res<SelectedBlock>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
+    board_blocks: Single<&BlocksAccessInfo, With<SudokuBoardMarker>>,
 ) {
     let board = boards.active_board(&active_board);
     if board
@@ -1117,14 +1178,13 @@ fn final_verification(
             help_text.0 =
                 "The sudoku board solved successfully!\nYou can try resetting.".to_string();
             board.get_blocks().filter_resolved().for_each(|f| {
-                if let Some((_, mut mesh)) = blocks.iter_mut().find(|(si, _)| {
-                    let index = si.actual_index();
-                    let my_index = f.index().actual_indexes();
-
-                    // Don't change selected block color.
-                    (selected.current != index) && (index.0 == my_index.1 && index.1 == my_index.0)
-                }) {
-                    mesh.0 = defaults.default_solved_block_color.clone();
+                if &selected.block_index() != f.index() {
+                    let block_entity = board_blocks.get(f.index());
+                    if let Some((_, mut mesh)) =
+                        block_entity.map(|e| blocks.get_mut(*e).ok()).flatten()
+                    {
+                        mesh.0 = defaults.default_solved_block_color.clone();
+                    }
                 }
             });
 
@@ -1168,16 +1228,12 @@ fn change_selected_block(
 fn update_selected_block(
     defaults: Res<DefaultMaterials>,
     selected: Res<SelectedBlock>,
-    active_board: Res<ActiveBoard>,
-    board: Res<SudokuBoardResources>,
-    boards_state: Res<BoardsStateMap>,
     // mut help_text: Single<&mut Text2d, With<HelpText>>,
     mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
+    board_blocks: Single<&BlocksAccessInfo, With<SudokuBoardMarker>>,
 ) {
-    if let Some((_, mut material)) = blocks.iter_mut().find(|(index, _)| {
-        let index = index.actual_index();
-        index.0 == selected.current.0 && index.1 == selected.current.1
-    }) {
+    let block_entity = board_blocks.get(&selected.block_index());
+    if let Some((_, mut material)) = block_entity.map(|e| blocks.get_mut(*e).ok()).flatten() {
         // This is selected block
         //TODO -
         // let index = index.actual_index();
@@ -1222,51 +1278,6 @@ fn update_selected_block(
             SelectionMode::Resolving => defaults.selected_resolving_block_color.clone(),
             SelectionMode::Possibilities => defaults.selected_possibilities_block_color.clone(),
         };
-    }
-
-    for (square_index, mut material) in blocks.iter_mut() {
-        let index = square_index.actual_index();
-        if index.0 == selected.current.0 && index.1 == selected.current.1 {
-            continue;
-        }
-
-        if material.0.id() == defaults.selected_possibilities_block_color.id()
-            || material.0.id() == defaults.selected_resolving_block_color.id()
-        {
-            let block = board
-                .active_board(&active_board)
-                .get_block(&square_index.block_index());
-
-            match &block.conflicting {
-                Some(conflicting) => match conflicting {
-                    sudoku_solver::Conflicting::AffectedBy(_) => {
-                        material.0 = defaults.conflicting_affected_color.clone();
-                    }
-                    sudoku_solver::Conflicting::Source => {
-                        material.0 = defaults.conflicting_source_color.clone();
-                    }
-                    sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
-                        material.0 = defaults.conflicting_affected_color.clone();
-                    }
-                },
-                None => {
-                    if let Some(state) = boards_state.boards.get(&active_board) {
-                        match state {
-                            BoardState::Playing => {
-                                material.0 = defaults.default_block_color.clone();
-                            }
-                            BoardState::FinishedVerified => {
-                                if block.is_resolved() {
-                                    material.0 = defaults.default_solved_block_color.clone();
-                                } else {
-                                    material.0 = defaults.default_block_color.clone();
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
@@ -1340,68 +1351,6 @@ fn digit_1_to_9_clicked(mut commands: Commands, keyboard_input: Res<ButtonInput<
     }
 }
 
-enum BlockUpdateResult {
-    Cleared,
-    Resolved,
-    Possible {
-        number: SudokuNumber,
-        is_cleared: bool,
-    },
-}
-
-fn _update_block(
-    selected: &SelectedBlock,
-    block: &mut sudoku_solver::SudokuBlock,
-    number: SudokuNumber,
-) -> BlockUpdateResult {
-    use BlockUpdateResult::*;
-
-    match selected.mode {
-        SelectionMode::Resolving => {
-            if let SudokuBlockStatus::Resolved(already) = block.status
-                && already == number
-            {
-                block.status = SudokuBlockStatus::Unresolved;
-                return Cleared;
-            }
-
-            block.status = SudokuBlockStatus::Resolved(number);
-            Resolved
-        }
-        SelectionMode::Possibilities => {
-            if let Some(pos) = block.status.as_possibilities_mut() {
-                if pos.numbers.has_number(number) {
-                    pos.numbers.del_number(number);
-
-                    if pos.numbers.count_numbers() == 0 {
-                        block.status = SudokuBlockStatus::Unresolved;
-                        Cleared
-                    } else {
-                        Possible {
-                            number,
-                            is_cleared: true,
-                        }
-                    }
-                } else {
-                    pos.numbers.set_number(number);
-                    Possible {
-                        number,
-                        is_cleared: false,
-                    }
-                }
-            } else {
-                block.status = SudokuBlockStatus::Possibilities(SudokuPossibilities::new(
-                    SudokuNumbers::new([number]),
-                ));
-                Possible {
-                    number,
-                    is_cleared: false,
-                }
-            }
-        }
-    }
-}
-
 fn update_mistakes_text(
     stats: Res<Stats>,
     mut mistakes_text: Single<&mut TextSpan, With<MistakesCountText>>,
@@ -1413,28 +1362,6 @@ fn update_mistakes_text(
 }
 
 #[derive(Debug, Component)]
-struct SquareIndex {
-    i: usize,
-    j: usize,
-    master: Option<(usize, usize)>,
-}
-
-impl SquareIndex {
-    fn actual_index(&self) -> (usize, usize) {
-        if let Some(master) = self.master {
-            (master.0 * 3 + self.i, master.1 * 3 + self.j)
-        } else {
-            (self.i, self.j)
-        }
-    }
-
-    fn block_index(&self) -> BlockIndex {
-        let (col, row) = self.actual_index();
-        BlockIndex::from_index(row, col).unwrap()
-    }
-}
-
-#[derive(Debug, Component)]
 struct Foundation;
 
 #[derive(Debug, Component)]
@@ -1443,67 +1370,19 @@ struct Block;
 #[derive(Debug, Component)]
 struct Possibilities;
 
-fn spawn_sudoku_board(
-    commands: &mut Commands<'_, '_>,
-    meshes: &mut ResMut<'_, Assets<Mesh>>,
-    defaults: &DefaultMaterials,
-    center: Vec2,
-    width: f32,
-    offset: f32,
-) {
-    for spawn_info in square_group_info(width, offset, center) {
-        commands
-            .spawn((
-                SquareBundle::new(
-                    defaults.default_foundation_block_color.clone(),
-                    meshes,
-                    spawn_info.clone(),
-                    None,
-                ),
-                Foundation,
-            ))
-            .with_children(|builder| {
-                let width = spawn_info.width;
-                let master_index = spawn_info.index;
-
-                for spawn_info in square_group_info(width, 5., Default::default()) {
-                    let bundle = SquareBundle::new(
-                        defaults.default_block_color.clone(),
-                        meshes,
-                        spawn_info.clone(),
-                        Some(master_index),
-                    );
-
-                    builder
-                        .spawn((bundle, Block, Pickable::default()))
-                        .observe(on_block_clicked);
-                }
-            });
-    }
-}
-
 fn on_block_clicked(
     over: On<Pointer<Click>>,
+    mut commands: Commands,
     indexes: Query<&SquareIndex, With<Block>>,
     mut selected: ResMut<SelectedBlock>,
 ) {
     if let Ok(index) = indexes.get(over.entity) {
         let index = index.actual_index();
-        selected.current = index;
-
-        // if over.duration.as_secs_f32() >= 1.0 {
-        //     let block = board.current.get_block_mut(
-        //         &BlockIndex::from_index(index.1, index.0).unwrap(),
-        //     );
-
-        //     match &block.status {
-        //         SudokuBlockStatus::Resolved(_)
-        //         | SudokuBlockStatus::Possibilities(_) => {
-        //             block.status = SudokuBlockStatus::Unresolved;
-        //         }
-        //         _ => (),
-        //     }
-        // }
+        if selected.current != index {
+            let pervious_selection = selected.block_index();
+            selected.current = index;
+            commands.trigger(ShouldUpdateEvent::Add(pervious_selection));
+        }
     }
 }
 
@@ -1519,7 +1398,7 @@ fn on_helper_block_clicked(
 
 fn on_game_input(
     input: On<GameInputs>,
-    defaults: Res<DefaultMaterials>,
+    mut commands: Commands,
     active_board: Res<ActiveBoard>,
     mut boards: ResMut<SudokuBoardResources>,
     mut boards_state: ResMut<BoardsStateMap>,
@@ -1527,7 +1406,6 @@ fn on_game_input(
     mut selected: ResMut<SelectedBlock>,
     mut engaging: ResMut<EngagingStrategyMap>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
-    mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
 ) {
     let board = boards.active_board_mut(&active_board);
     let board_state = boards_state.boards.get_mut(&active_board);
@@ -1616,15 +1494,6 @@ fn on_game_input(
             }
 
             help_text.0 = DEFAULT_HELP_TEXT.to_string();
-            board.get_blocks().filter_unresolved().for_each(|f| {
-                if let Some((_, mut mesh)) = blocks.iter_mut().find(|(si, _)| {
-                    let index = si.actual_index();
-                    let my_index = f.index().actual_indexes();
-                    index.0 == my_index.1 && index.1 == my_index.0
-                }) {
-                    mesh.0 = defaults.default_block_color.clone();
-                }
-            });
         }
         CommandType::ChangeSelectionMode => {
             selected.mode = match selected.mode {
@@ -1651,6 +1520,8 @@ fn on_game_input(
             }
         }
         CommandType::Direction(direction) => {
+            let pervious_selection = selected.block_index();
+
             match direction {
                 Direction::Up => {
                     if selected.current.1 > 0 {
@@ -1681,6 +1552,8 @@ fn on_game_input(
                     }
                 }
             };
+
+            commands.trigger(ShouldUpdateEvent::Add(pervious_selection));
         }
         CommandType::Strategy(strategy) => {
             if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
@@ -1798,11 +1671,7 @@ impl SquareBundle {
                 y: spawn_info.translation.y,
                 z: 1.,
             }),
-            index: SquareIndex {
-                i: spawn_info.index.0,
-                j: spawn_info.index.1,
-                master: master_index,
-            },
+            index: SquareIndex::new(spawn_info.index.0, spawn_info.index.1, master_index),
             spawn_info,
         }
     }
@@ -1838,4 +1707,120 @@ fn square_group_info(
             }
         })
     })
+}
+
+fn spawn_sudoku_board(
+    commands: &mut Commands<'_, '_>,
+    meshes: &mut ResMut<'_, Assets<Mesh>>,
+    defaults: &DefaultMaterials,
+    center: Vec2,
+    width: f32,
+    offset: f32,
+) {
+    let mut access_infos: HashMap<BlockIndex, Entity> = Default::default();
+
+    let mut spawned = commands.spawn((
+        Transform::default().with_translation(Vec3::default().with_xy(center)),
+        SudokuBoardMarker,
+    ));
+
+    spawned.with_children(|builder| {
+        for spawn_info in square_group_info(width, offset, center.with_y(center.y - 50.)) {
+            builder
+                .spawn((
+                    SquareBundle::new(
+                        defaults.default_foundation_block_color.clone(),
+                        meshes,
+                        spawn_info.clone(),
+                        None,
+                    ),
+                    Foundation,
+                ))
+                .with_children(|builder| {
+                    let width = spawn_info.width;
+                    let master_index = spawn_info.index;
+
+                    for spawn_info in square_group_info(width, 5., Default::default()) {
+                        let bundle = SquareBundle::new(
+                            defaults.default_block_color.clone(),
+                            meshes,
+                            spawn_info.clone(),
+                            Some(master_index),
+                        );
+
+                        let block_index = bundle.index.block_index();
+                        let entity = builder
+                            .spawn((bundle, Block, Pickable::default()))
+                            .observe(on_block_clicked)
+                            .id();
+
+                        access_infos.insert(block_index, entity);
+                    }
+                });
+        }
+    });
+
+    spawned.insert(BlocksAccessInfo::new(access_infos));
+}
+
+enum BlockUpdateResult {
+    Cleared,
+    Resolved,
+    Possible {
+        number: SudokuNumber,
+        is_cleared: bool,
+    },
+}
+
+fn _update_block(
+    selected: &SelectedBlock,
+    block: &mut sudoku_solver::SudokuBlock,
+    number: SudokuNumber,
+) -> BlockUpdateResult {
+    use BlockUpdateResult::*;
+
+    match selected.mode {
+        SelectionMode::Resolving => {
+            if let SudokuBlockStatus::Resolved(already) = block.status
+                && already == number
+            {
+                block.status = SudokuBlockStatus::Unresolved;
+                return Cleared;
+            }
+
+            block.status = SudokuBlockStatus::Resolved(number);
+            Resolved
+        }
+        SelectionMode::Possibilities => {
+            if let Some(pos) = block.status.as_possibilities_mut() {
+                if pos.numbers.has_number(number) {
+                    pos.numbers.del_number(number);
+
+                    if pos.numbers.count_numbers() == 0 {
+                        block.status = SudokuBlockStatus::Unresolved;
+                        Cleared
+                    } else {
+                        Possible {
+                            number,
+                            is_cleared: true,
+                        }
+                    }
+                } else {
+                    pos.numbers.set_number(number);
+                    Possible {
+                        number,
+                        is_cleared: false,
+                    }
+                }
+            } else {
+                block.status = SudokuBlockStatus::Possibilities(SudokuPossibilities::new(
+                    SudokuNumbers::new([number]),
+                ));
+                Possible {
+                    number,
+                    is_cleared: false,
+                }
+            }
+        }
+    }
 }
