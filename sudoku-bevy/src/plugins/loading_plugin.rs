@@ -3,7 +3,7 @@ use bevy::{
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, RED, WHITE, YELLOW},
-        tailwind::{BLUE_200, GRAY_600, GREEN_400, ORANGE_400, RED_400, YELLOW_400},
+        tailwind::{BLUE_200, GRAY_600, GREEN_400, ORANGE_400, ORANGE_500, RED_400, YELLOW_400},
     },
     platform::collections::HashMap,
     prelude::*,
@@ -26,6 +26,8 @@ pub enum AppState {
 #[derive(Debug, Resource, Default)]
 pub struct DefaultMaterials {
     // Handles
+    pub default_deactivate_board_color: Handle<ColorMaterial>,
+    pub default_active_board_color: Handle<ColorMaterial>,
     pub default_foundation_block_color: Handle<ColorMaterial>,
     pub default_possibilities_block_color: Handle<ColorMaterial>,
     pub default_block_color: Handle<ColorMaterial>,
@@ -91,6 +93,7 @@ impl Plugin for LoadingPlugin {
                         maximize: false,
                         ..Default::default()
                     },
+                    present_mode: bevy::window::PresentMode::AutoNoVsync,
                     ..Default::default()
                 }),
                 ..Default::default()
@@ -128,6 +131,8 @@ fn setup_asset_loading(
     mut strategy_colors: ResMut<StrategyMarkerColors>,
     asset_server: Res<AssetServer>,
 ) {
+    defaults.default_active_board_color = materials.add(Color::from(ORANGE_500));
+    defaults.default_deactivate_board_color = materials.add(Color::from(PURPLE));
     defaults.default_block_color = materials.add(Color::from(YELLOW));
     defaults.default_solved_block_color = materials.add(Color::from(GREEN_400));
     defaults.selected_resolving_block_color = materials.add(Color::from(YELLOW_400));

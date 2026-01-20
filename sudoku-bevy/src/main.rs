@@ -8,6 +8,7 @@ use std::{
 
 use bevy::{
     color::palettes::css::{BLACK, RED, WHITE, YELLOW},
+    ecs::system::SystemParam,
     input::common_conditions::{input_just_pressed, input_pressed},
     log::{self},
     prelude::*,
@@ -15,7 +16,7 @@ use bevy::{
     text::TextBounds,
 };
 use sudoku_bevy::{
-    BlocksAccessInfo, SquareIndex,
+    BlocksAccessInfo, SquareIndex, gen_random_city_name,
     plugins::{
         loading_plugin::{
             AppState, DefaultAssets, DefaultMaterials, LoadingPlugin, StrategyMarkerColors,
@@ -69,9 +70,9 @@ impl BoardId {
 }
 
 #[derive(Debug, Clone, Resource, Default, Deref, DerefMut)]
-struct ActiveBoard(BoardId);
+struct ActiveBoardsMapping(HashMap<Entity, BoardId>);
 
-#[derive(Debug, Resource, Default)]
+#[derive(Debug, Resource, Default, Deref, DerefMut)]
 struct ActiveBoardChanged(bool);
 
 #[derive(Debug, Resource, Default, PartialEq, Eq)]
@@ -80,7 +81,7 @@ struct SudokuBoardResources {
 }
 
 impl SudokuBoardResources {
-    fn active_board(&self, active_board: &ActiveBoard) -> &SudokuBoard {
+    fn active_board(&self, active_board: &BoardId) -> &SudokuBoard {
         self.boards
             .get(&active_board.difficulty)
             .unwrap()
@@ -88,7 +89,7 @@ impl SudokuBoardResources {
             .unwrap()
     }
 
-    fn active_board_mut(&mut self, active_board: &ActiveBoard) -> &mut SudokuBoard {
+    fn active_board_mut(&mut self, active_board: &BoardId) -> &mut SudokuBoard {
         self.boards
             .get_mut(&active_board.difficulty)
             .unwrap()
@@ -103,7 +104,7 @@ struct SudokuBoardSnapshotResources {
 }
 
 impl SudokuBoardSnapshotResources {
-    fn active_board(&self, active_board: &ActiveBoard) -> &SudokuBoard {
+    fn active_board(&self, active_board: &BoardId) -> &SudokuBoard {
         self.boards
             .get(&active_board.difficulty)
             .unwrap()
@@ -111,7 +112,7 @@ impl SudokuBoardSnapshotResources {
             .unwrap()
     }
 
-    fn active_board_mut(&mut self, active_board: &ActiveBoard) -> &mut SudokuBoard {
+    fn active_board_mut(&mut self, active_board: &BoardId) -> &mut SudokuBoard {
         self.boards
             .get_mut(&active_board.difficulty)
             .unwrap()
@@ -279,13 +280,47 @@ struct EngagingStrategyMap {
 #[derive(Debug, Event)]
 struct UpdateBoardList;
 
-#[derive(Debug, Component)]
-struct SudokuBoardMarker;
+#[derive(Debug, Component, Deref)]
+struct SudokuBoardVisual {
+    name: String,
+}
+
+#[derive(Debug, Resource, Deref, DerefMut)]
+struct ActiveBoardVisual(Entity);
+
+#[derive(Debug, SystemParam)]
+struct ActiveBoardProvider<'w> {
+    active_visual: If<Res<'w, ActiveBoardVisual>>,
+    boards_mapping: If<Res<'w, ActiveBoardsMapping>>,
+}
+
+impl<'w> ActiveBoardProvider<'w> {
+    fn active_board(&self) -> Option<&BoardId> {
+        self.boards_mapping.0.get(&self.active_visual)
+    }
+}
+
+#[derive(Debug, SystemParam)]
+struct ActiveBoardProviderMut<'w> {
+    active_visual: If<Res<'w, ActiveBoardVisual>>,
+    boards_mapping: If<ResMut<'w, ActiveBoardsMapping>>,
+}
+
+#[allow(dead_code)]
+impl<'w> ActiveBoardProviderMut<'w> {
+    fn active_board(&mut self) -> Option<&mut BoardId> {
+        self.boards_mapping.0.get_mut(&self.active_visual)
+    }
+
+    fn update_active_board(&mut self, id: BoardId) -> Option<BoardId> {
+        self.boards_mapping.0.insert(***self.active_visual, id)
+    }
+}
 
 fn main() {
     App::new()
         .add_plugins(LoadingPlugin)
-        .init_resource::<ActiveBoard>()
+        .init_resource::<ActiveBoardsMapping>()
         .init_resource::<ActiveBoardChanged>()
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SudokuBoardSnapshotResources>()
@@ -301,6 +336,23 @@ fn main() {
         .add_observer(update_boards_list)
         .add_observer(on_game_input)
         .add_observer(on_should_update_event)
+        .add_observer(
+            |event: On<SudokuBoardVisualSpawned>,
+             mut commands: Commands,
+             active_visual: Option<Res<ActiveBoardVisual>>,
+             mut active_board_mapping: ResMut<ActiveBoardsMapping>| {
+                if active_visual.is_none() {
+                    commands.insert_resource(ActiveBoardVisual(event.0));
+                    active_board_mapping.insert(
+                        event.0,
+                        BoardId {
+                            difficulty: Some(SudokuBoardDifficulty::Normal),
+                            index: 0,
+                        },
+                    );
+                }
+            },
+        )
         // Ready state systems
         .add_systems(
             OnEnter(AppState::Ready),
@@ -345,14 +397,19 @@ fn main() {
                 (
                     update_board.run_if(
                         resource_changed::<SudokuBoardResources>
-                            .or(resource_changed::<ActiveBoard>)
+                            .or(resource_changed::<ActiveBoardsMapping>)
                             .or(resource_changed::<ShouldUpdateAnyway>),
                     ),
                     final_verification.run_if(resource_changed::<SudokuBoardResources>),
                 )
                     .chain(),
                 update_mistakes_text.run_if(resource_changed::<Stats>),
-                update_active_board_text.run_if(resource_changed::<ActiveBoard>),
+                update_active_board_text.run_if(
+                    resource_changed::<ActiveBoardsMapping>
+                        .or(resource_changed::<ActiveBoardChanged>),
+                ),
+                active_board_visual_changed
+                    .run_if(resource_exists_and_changed::<ActiveBoardVisual>),
             )
                 .chain()
                 .run_if(in_state(AppState::Ready)),
@@ -362,7 +419,6 @@ fn main() {
 
 fn setup_game(
     mut commands: Commands,
-    mut active_board: ResMut<ActiveBoard>,
     mut sudoku_boards: ResMut<SudokuBoardResources>,
     mut sudoku_snapshots: ResMut<SudokuBoardSnapshotResources>,
     mut boards_state: ResMut<BoardsStateMap>,
@@ -372,9 +428,6 @@ fn setup_game(
     strategy_colors: Res<StrategyMarkerColors>,
 ) {
     log::warn!("Death is close.");
-
-    let width = 630.;
-    let offset = 5.;
 
     let boards = [
         (None, vec![SudokuBoard::default()]),
@@ -401,24 +454,21 @@ fn setup_game(
         });
     }
 
-    active_board.difficulty = Some(SudokuBoardDifficulty::Normal);
-    active_board.index = 0;
+    let spawn_board_system = commands.register_system(spawn_sudoku_board_visual);
 
-    spawn_sudoku_board(
-        &mut commands,
-        &mut meshes,
-        &defaults,
-        Default::default(),
-        width,
-        offset,
-    );
+    commands.run_system_with(spawn_board_system, Vec2::default().with_y(50.));
+    commands.run_system_with(spawn_board_system, vec2(650., -600.));
+    commands.run_system_with(spawn_board_system, vec2(-650., -350.));
+    commands.run_system_with(spawn_board_system, vec2(845., 70.));
+    // commands.run_system_with(spawn_board_system, vec2(-930., 320.));
+    commands.run_system_with(spawn_board_system, vec2(0., -740.));
 
     commands.spawn(TextBundle::new(
         "Sudoku",
         defaults_assets.default_font.clone(),
         100.,
         WHITE,
-        Transform::from_translation(Vec3::default().with_y(450.)),
+        Transform::from_translation(Vec3::default().with_y(460.)),
     ));
 
     commands
@@ -427,7 +477,7 @@ fn setup_game(
             defaults_assets.default_font.clone(),
             20.,
             WHITE,
-            Transform::from_translation(Vec3::default().with_y(380.)),
+            Transform::from_translation(Vec3::default().with_y(400.)),
         ))
         .with_children(|parent| {
             parent.spawn((
@@ -444,10 +494,10 @@ fn setup_game(
 
     commands
         .spawn((
-            Mesh2d(meshes.add(Rectangle::new(620., 100.))),
+            Mesh2d(meshes.add(Rectangle::new(630., 110.))),
             MeshMaterial2d(defaults.default_foundation_block_color.clone()),
             Transform::default().with_translation(Vec3 {
-                y: -320.,
+                y: -340.,
                 ..Default::default()
             }),
         ))
@@ -663,7 +713,7 @@ fn setup_game(
             defaults_assets.default_font.clone(),
             20.,
             YELLOW,
-            Transform::from_translation(Vec3::default().with_x(90.).with_y(482.)),
+            Transform::from_translation(Vec3::default().with_x(90.).with_y(492.)),
             TextLayout::new(Justify::Left, LineBreak::NoWrap),
         ),
         Anchor::CENTER_LEFT,
@@ -681,31 +731,62 @@ fn setup_game(
     commands.trigger(UpdateBoardList);
 }
 
+fn active_board_visual_changed(
+    mut commands: Commands,
+    active_visual: Res<ActiveBoardVisual>,
+    defaults: If<Res<DefaultMaterials>>,
+    mut visuals: Query<(Entity, &mut MeshMaterial2d<ColorMaterial>), With<SudokuBoardVisual>>,
+) {
+    #[cfg(debug_assertions)]
+    println!("Active  board changed.");
+
+    for (entity, mut material) in visuals.iter_mut() {
+        if entity == active_visual.0 {
+            material.0 = defaults.default_active_board_color.clone();
+        } else {
+            material.0 = defaults.default_deactivate_board_color.clone();
+        }
+    }
+
+    commands.trigger(UpdateBoardList);
+}
+
 fn update_active_board_text(
-    active_board: Res<ActiveBoard>,
+    active_board_provider: ActiveBoardProvider,
+    visuals: Query<&SudokuBoardVisual>,
     mut text: Single<&mut Text2d, With<ActiveBoardText>>,
 ) {
-    text.0 = format!(
-        "#{} {}",
-        active_board.index + 1,
-        match active_board.difficulty {
-            Some(diff) => diff.to_string(),
-            None => "Unspecified".to_string(),
-        },
-    )
+    if let Some(active_board) = active_board_provider.active_board() {
+        let name = if let Ok(visual_info) = visuals.get(***active_board_provider.active_visual) {
+            format!(" In {}", visual_info.name)
+        } else {
+            "".to_string()
+        };
+
+        text.0 = format!(
+            "#{} {}{}",
+            active_board.index + 1,
+            match active_board.difficulty {
+                Some(diff) => diff.to_string(),
+                None => "Unspecified".to_string(),
+            },
+            name
+        )
+    }
 }
 
 fn update_boards_list(
     _ev: On<UpdateBoardList>,
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
-    active_board: Res<ActiveBoard>,
+    active_board: ActiveBoardProvider,
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
     boards: Res<SudokuBoardResources>,
     boards_state: Res<BoardsStateMap>,
     info_blocks: Query<Entity, With<BoardInfoBlock>>,
     rnb_block: Query<Entity, With<RequestNewBoardBlock>>,
+    visuals: Query<&SudokuBoardVisual>,
 ) {
     if let Ok(rnb) = rnb_block.single() {
         commands.entity(rnb).despawn();
@@ -728,20 +809,30 @@ fn update_boards_list(
 
     for (diff, boards) in items {
         for (index, _) in boards.iter().enumerate() {
-            let selected = &active_board.difficulty == diff && index == active_board.index;
+            let id = BoardId::new(*diff, index);
+            let selected = active_board
+                .active_board()
+                .is_some_and(|active_board| active_board == &id);
             let finished = boards_state
-                .get(&BoardId::new(*diff, index))
+                .get(&id)
                 .is_some_and(|f| f.is_finished_verified());
+            let visual_info = active_board
+                .boards_mapping
+                .iter()
+                .find(|(_, v)| v == &&id)
+                .map(|(e, _)| visuals.get(*e).ok())
+                .flatten();
 
             latest_y -= 55.;
-            commands
-                .spawn((
-                    Mesh2d(meshes.add(Rectangle::new(180., 50.))),
-                    MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-                    Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y))),
-                    Pickable::default(),
-                    BoardInfoBlock(BoardId::new(*diff, index)),
-                ))
+            let mut spawned = commands.spawn((
+                Mesh2d(meshes.add(Rectangle::new(180., 50.))),
+                MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y))),
+                Pickable::default(),
+                BoardInfoBlock(BoardId::new(*diff, index)),
+            ));
+
+            spawned
                 .observe(board_info_block_clicked)
                 .observe(board_info_block_over)
                 .observe(on_pointer_out)
@@ -777,6 +868,19 @@ fn update_boards_list(
                             ));
                         });
                 });
+
+            if let Some(visual_info) = visual_info {
+                spawned.with_child((
+                    TextBundle::new(
+                        visual_info.name.to_string(),
+                        font.font.clone(),
+                        17.,
+                        WHITE,
+                        Transform::default().with_translation(Vec3::default().with_x(-95.)),
+                    ),
+                    Anchor::CENTER_RIGHT,
+                ));
+            }
         }
     }
 
@@ -817,7 +921,7 @@ fn request_new_board(
     mut boards: ResMut<SudokuBoardResources>,
     mut snapshots: ResMut<SudokuBoardSnapshotResources>,
     mut boards_state: ResMut<BoardsStateMap>,
-    mut active_board: ResMut<ActiveBoard>,
+    mut active_board: ActiveBoardProviderMut,
     mut active_board_changed: ResMut<ActiveBoardChanged>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
@@ -834,7 +938,7 @@ fn request_new_board(
 
     let id = BoardId::new(None, default.len() - 1);
     boards_state.boards.insert(id, Default::default());
-    active_board.0 = id;
+    active_board.update_active_board(id);
 
     active_board_changed.0 = true;
 
@@ -844,13 +948,12 @@ fn request_new_board(
 fn board_info_block_clicked(
     event: On<Pointer<Click>>,
     mut commands: Commands,
-    mut active_board: ResMut<ActiveBoard>,
+    mut active_board: ActiveBoardProviderMut,
     mut active_board_changed: ResMut<ActiveBoardChanged>,
     board_info_block: Query<&BoardInfoBlock>,
 ) {
     if let Ok(block_info) = board_info_block.get(event.entity) {
-        active_board.difficulty = block_info.difficulty;
-        active_board.index = block_info.index;
+        active_board.update_active_board(block_info.0);
         active_board_changed.0 = true;
         commands.trigger(UpdateBoardList);
     }
@@ -938,12 +1041,12 @@ fn on_should_update_event(
     }
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Event)]
 enum ShouldUpdateEvent {
     Clear,
     Add(BlockIndex),
     AddMany(Vec<BlockIndex>),
-    #[allow(dead_code)]
     Remove(BlockIndex),
 }
 
@@ -957,13 +1060,13 @@ fn update_board(
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
     strategy_colors: Res<StrategyMarkerColors>,
-    active_board: Res<ActiveBoard>,
+    active_board: ActiveBoardProvider,
     mut active_board_changed: ResMut<ActiveBoardChanged>,
     boards: Res<SudokuBoardResources>,
     boards_state: Res<BoardsStateMap>,
     mut snapshots: ResMut<SudokuBoardSnapshotResources>,
     mut blocks: Query<(Entity, &SquareSpawnInfo, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
-    board_blocks: Single<&BlocksAccessInfo, With<SudokuBoardMarker>>,
+    board_visuals: Query<&BlocksAccessInfo, With<SudokuBoardVisual>>,
     should_updates: Res<ShouldUpdateAnyway>,
     selected: Res<SelectedBlock>,
 ) {
@@ -975,6 +1078,18 @@ fn update_board(
     let mut text_font = TextFont {
         font: defaults_assets.default_font.clone(),
         ..default()
+    };
+
+    let board_visual = if let Ok(board_visual) = board_visuals.get(**active_board.active_visual.0) {
+        board_visual
+    } else {
+        return;
+    };
+
+    let active_board = if let Some(active_board) = active_board.active_board() {
+        active_board
+    } else {
+        return;
     };
 
     for (row, col) in SudokuNumber::iter_numbers() {
@@ -993,7 +1108,7 @@ fn update_board(
 
             snapshot_should_update = true;
 
-            let block_entity = board_blocks.get(&block_index);
+            let block_entity = board_visual.get(&block_index);
             if let Some((entity, spawn_info, mut material)) =
                 block_entity.map(|e| blocks.get_mut(*e).ok()).flatten()
             {
@@ -1019,7 +1134,7 @@ fn update_board(
                 }
 
                 // Regular block update.
-                if block.status != snapshot_block.status {
+                if block.status != snapshot_block.status || active_board_changed.0 {
                     commands.entity(entity).despawn_children();
                     match &block.status {
                         SudokuBlockStatus::Unresolved => (),
@@ -1126,22 +1241,20 @@ fn update_board(
                 }
 
                 // Update blocks based on conflicts.
-                if block.conflicting != snapshot_block.conflicting && selected.current != (i, j) {
+                if (block.conflicting != snapshot_block.conflicting || active_board_changed.0)
+                    && selected.current != (i, j)
+                {
                     match &block.conflicting {
-                        Some(conflicting) => match conflicting {
-                            sudoku_solver::Conflicting::AffectedBy(_) => {
-                                material.0 = defaults.conflicting_affected_color.clone();
-                            }
-                            sudoku_solver::Conflicting::Source => {
-                                material.0 = defaults.conflicting_source_color.clone();
-                            }
-                            sudoku_solver::Conflicting::AffectedByPossibilities { .. } => {
-                                material.0 = defaults.conflicting_affected_color.clone();
-                            }
-                        },
-                        None => {
-                            material.0 = defaults.default_block_color.clone();
+                        Some(sudoku_solver::Conflicting::AffectedBy(_)) => {
+                            material.0 = defaults.conflicting_affected_color.clone();
                         }
+                        Some(sudoku_solver::Conflicting::Source) => {
+                            material.0 = defaults.conflicting_source_color.clone();
+                        }
+                        Some(sudoku_solver::Conflicting::AffectedByPossibilities { .. }) => {
+                            material.0 = defaults.conflicting_affected_color.clone();
+                        }
+                        _ => {}
                     }
                 }
 
@@ -1170,15 +1283,18 @@ fn update_board(
 }
 
 fn final_verification(
-    active_board: Res<ActiveBoard>,
+    mut commands: Commands,
+    active_board: ActiveBoardProvider,
     boards: Res<SudokuBoardResources>,
     mut boards_state: ResMut<BoardsStateMap>,
-    defaults: Res<DefaultMaterials>,
-    selected: Res<SelectedBlock>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
-    mut blocks: Query<(&SquareIndex, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
-    board_blocks: Single<&BlocksAccessInfo, With<SudokuBoardMarker>>,
 ) {
+    let active_board = if let Some(active_board) = active_board.active_board() {
+        active_board
+    } else {
+        return;
+    };
+
     let board = boards.active_board(&active_board);
     if board
         .get_blocks()
@@ -1193,16 +1309,11 @@ fn final_verification(
 
             help_text.0 =
                 "The sudoku board solved successfully!\nYou can try resetting.".to_string();
-            board.get_blocks().filter_resolved().for_each(|f| {
-                if &selected.block_index() != f.index() {
-                    let block_entity = board_blocks.get(f.index());
-                    if let Some((_, mut mesh)) =
-                        block_entity.map(|e| blocks.get_mut(*e).ok()).flatten()
-                    {
-                        mesh.0 = defaults.default_solved_block_color.clone();
-                    }
-                }
-            });
+            commands.trigger(ShouldUpdateEvent::AddMany(
+                (board.get_blocks().filter_resolved().map(|f| f.index()))
+                    .cloned()
+                    .collect(),
+            ));
 
             #[cfg(debug_assertions)]
             println!("Sudoku solved successfully!");
@@ -1368,15 +1479,29 @@ struct Block;
 #[derive(Debug, Component)]
 struct Possibilities;
 
+#[derive(Debug, Component)]
+struct RelatedBoardVisual(Entity);
+
 fn on_block_clicked(
     over: On<Pointer<Click>>,
     mut commands: Commands,
-    indexes: Query<&SquareIndex, With<Block>>,
+    indexes: Query<(&RelatedBoardVisual, &SquareIndex), With<Block>>,
     mut selected: ResMut<SelectedBlock>,
+    active_visual: Option<ResMut<ActiveBoardVisual>>,
+    mut active_board_changed: ResMut<ActiveBoardChanged>,
 ) {
-    if let Ok(index) = indexes.get(over.entity) {
+    if let Ok((related_visual, index)) = indexes.get(over.entity) {
+        if let Some(mut visual_id) = active_visual {
+            if &visual_id.0 != &related_visual.0 {
+                visual_id.0 = related_visual.0;
+                active_board_changed.0 = true;
+            }
+        } else {
+            return;
+        };
+
         let index = index.actual_index();
-        if selected.current != index {
+        if selected.current != index || active_board_changed.0 {
             let pervious_selection = selected.block_index();
             selected.current = index;
             commands.trigger(ShouldUpdateEvent::AddMany(vec![
@@ -1400,7 +1525,7 @@ fn on_helper_block_clicked(
 fn on_game_input(
     input: On<GameInputs>,
     mut commands: Commands,
-    active_board: Res<ActiveBoard>,
+    active_board: ActiveBoardProvider,
     mut boards: ResMut<SudokuBoardResources>,
     mut boards_state: ResMut<BoardsStateMap>,
     mut stats: ResMut<Stats>,
@@ -1408,6 +1533,12 @@ fn on_game_input(
     mut engaging: ResMut<EngagingStrategyMap>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
+    let active_board = if let Some(active_board) = active_board.active_board() {
+        active_board
+    } else {
+        return;
+    };
+
     let board = boards.active_board_mut(&active_board);
     let board_state = boards_state.boards.get_mut(&active_board);
 
@@ -1566,7 +1697,7 @@ fn on_game_input(
             }
 
             let mut show_only_effect = false;
-            let engaging = engaging.engaging.entry(active_board.0).or_default();
+            let engaging = engaging.engaging.entry(*active_board).or_default();
 
             if engaging.strategy.is_some_and(|f| f == strategy) {
                 // This strategy was engaged before
@@ -1713,28 +1844,57 @@ fn square_group_info(
     })
 }
 
-fn spawn_sudoku_board(
-    commands: &mut Commands<'_, '_>,
-    meshes: &mut ResMut<'_, Assets<Mesh>>,
-    defaults: &DefaultMaterials,
-    center: Vec2,
-    width: f32,
-    offset: f32,
+#[derive(Debug, Event)]
+struct SudokuBoardVisualSpawned(Entity);
+
+fn spawn_sudoku_board_visual(
+    center: In<Vec2>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    defaults: Res<DefaultMaterials>,
+    defaults_assets: Res<DefaultAssets>,
+    visuals: Query<&SudokuBoardVisual>,
+    help_text: Option<Single<&mut Text2d, With<HelpText>>>,
 ) {
+    let width = 630.;
+    let top_padding = 15.;
     let mut access_infos: HashMap<BlockIndex, Entity> = Default::default();
 
+    let existing_names = visuals.iter().map(|f| &f.name).collect::<Vec<_>>();
+
+    if existing_names.len() >= 5 {
+        if let Some(mut help_text) = help_text {
+            help_text.0 = "To many visuals!".to_string();
+        }
+        return;
+    }
+
+    let mut name = gen_random_city_name();
+    while existing_names.contains(&&name) {
+        name = gen_random_city_name()
+    }
+
     let mut spawned = commands.spawn((
-        Transform::default().with_translation(Vec3::default().with_xy(center)),
-        SudokuBoardMarker,
+        Mesh2d(meshes.add(Rectangle::new(width, width + top_padding))),
+        MeshMaterial2d(defaults.default_deactivate_board_color.clone()),
+        Transform::default().with_translation(Vec3 {
+            x: center.x,
+            y: center.y,
+            ..Default::default()
+        }),
+        SudokuBoardVisual { name: name.clone() },
+        Pickable::default(),
     ));
 
+    let visual_id = spawned.id();
+
     spawned.with_children(|builder| {
-        for spawn_info in square_group_info(width, offset, center.with_y(center.y - 50.)) {
+        for spawn_info in square_group_info(width, 5., Vec2::default().with_y(top_padding - 5.)) {
             builder
                 .spawn((
                     SquareBundle::new(
                         defaults.default_foundation_block_color.clone(),
-                        meshes,
+                        &mut meshes,
                         spawn_info.clone(),
                         None,
                     ),
@@ -1747,14 +1907,19 @@ fn spawn_sudoku_board(
                     for spawn_info in square_group_info(width, 5., Default::default()) {
                         let bundle = SquareBundle::new(
                             defaults.default_block_color.clone(),
-                            meshes,
+                            &mut meshes,
                             spawn_info.clone(),
                             Some(master_index),
                         );
 
                         let block_index = bundle.index.block_index();
                         let entity = builder
-                            .spawn((bundle, Block, Pickable::default()))
+                            .spawn((
+                                bundle,
+                                Block,
+                                RelatedBoardVisual(visual_id),
+                                Pickable::default(),
+                            ))
                             .observe(on_block_clicked)
                             .id();
 
@@ -1764,8 +1929,23 @@ fn spawn_sudoku_board(
         }
     });
 
+    spawned.with_child((
+        TextBundle::new(
+            name,
+            defaults_assets.default_font.clone(),
+            17.,
+            WHITE,
+            Transform::default().with_translation(Vec3::default().with_xy(vec2(-305., 310.))),
+        ),
+        Anchor::CENTER_LEFT,
+    ));
+
     spawned.insert(BlocksAccessInfo::new(access_infos));
+    // spawned.observe(on_drag);
+    commands.trigger(SudokuBoardVisualSpawned(visual_id));
 }
+
+// fn on_drag(event: On<Pointer<Drag>>) {}
 
 enum BlockUpdateResult {
     Cleared,

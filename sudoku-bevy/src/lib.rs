@@ -4,6 +4,7 @@ use bevy::{
     ecs::{component::Component, entity::Entity},
     prelude::Deref,
 };
+use rand::seq::IndexedRandom;
 use sudoku_solver::BlockIndex;
 
 pub mod pancam;
@@ -54,4 +55,18 @@ impl SquareIndex {
         let (col, row) = self.actual_index();
         BlockIndex::from_index(row, col).unwrap()
     }
+}
+
+pub const CITY_NAMES: &[&str] = &[
+    "Tokyo",
+    "Moscow",
+    "Berlin",
+    "Tehran",
+    "Rome",
+    "Paris",
+    "Hong kong",
+];
+
+pub fn gen_random_city_name() -> String {
+    CITY_NAMES.choose(&mut rand::rng()).unwrap().to_string()
 }
