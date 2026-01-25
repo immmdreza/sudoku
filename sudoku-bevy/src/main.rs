@@ -3,7 +3,10 @@
 use std::{collections::HashMap, fmt::Display};
 
 use bevy::{
-    color::palettes::css::{BLACK, RED, WHITE, YELLOW},
+    color::palettes::{
+        css::{BLACK, RED, WHITE, YELLOW},
+        tailwind::ORANGE_300,
+    },
     ecs::system::{SystemId, SystemParam},
     log::{self},
     prelude::*,
@@ -545,7 +548,7 @@ fn setup_game(
         "Strategies",
         defaults_assets.default_font.clone(),
         20.,
-        WHITE,
+        ORANGE_300,
         Transform::from_translation(Vec3::default().with_xy(vec2(420., -60.))),
     ));
 
