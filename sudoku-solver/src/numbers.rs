@@ -12,6 +12,18 @@ pub enum SudokuNumber {
 }
 
 impl SudokuNumber {
+    pub const ALL: [SudokuNumber; 9] = [
+        SudokuNumber::One,
+        SudokuNumber::Two,
+        SudokuNumber::Three,
+        SudokuNumber::Four,
+        SudokuNumber::Five,
+        SudokuNumber::Six,
+        SudokuNumber::Seven,
+        SudokuNumber::Eight,
+        SudokuNumber::Nine,
+    ];
+
     pub fn to_index(&self) -> usize {
         let number: usize = (*self).into();
         number - 1
@@ -20,6 +32,12 @@ impl SudokuNumber {
     pub fn to_u8(&self) -> u8 {
         let number: usize = (*self).into();
         number as u8
+    }
+
+    pub fn iter_numbers() -> impl Iterator<Item = (SudokuNumber, SudokuNumber)> {
+        SudokuNumber::ALL
+            .into_iter()
+            .flat_map(|row| SudokuNumber::ALL.into_iter().map(move |col| (row, col)))
     }
 }
 
@@ -58,7 +76,7 @@ impl From<SudokuNumber> for usize {
     }
 }
 
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct SudokuNumbers {
     // false means the number is not contained
     numbers: [bool; 9],
