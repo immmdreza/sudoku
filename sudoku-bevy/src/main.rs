@@ -1,15 +1,10 @@
 #![allow(clippy::too_many_arguments)]
 
-use std::{
-    collections::HashMap,
-    fmt::{Display, Write},
-    time::Duration,
-};
+use std::{collections::HashMap, fmt::Display};
 
 use bevy::{
     color::palettes::css::{BLACK, RED, WHITE, YELLOW},
-    ecs::system::SystemParam,
-    input::common_conditions::{input_just_pressed, input_pressed},
+    ecs::system::{SystemId, SystemParam},
     log::{self},
     prelude::*,
     sprite::Anchor,
@@ -18,10 +13,9 @@ use bevy::{
 use sudoku_bevy::{
     BlocksAccessInfo, SquareIndex, gen_random_city_name,
     plugins::{
-        loading_plugin::{
-            AppState, DefaultAssets, DefaultMaterials, LoadingPlugin, StrategyMarkerColors,
-        },
-        shared::TextBundle,
+        input_handling::InputHandlingPlugin,
+        loading_plugin::{DefaultAssets, DefaultMaterials, LoadingPlugin, StrategyMarkerColors},
+        shared::{AppState, CommandType, Direction, GameInputs, TextBundle},
     },
 };
 use sudoku_solver::{
@@ -153,69 +147,12 @@ struct Stats {
 #[derive(Debug, Component)]
 struct MistakesCountText;
 
-#[derive(Debug, Clone, Copy)]
-enum Direction {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-impl Display for Direction {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_char(match self {
-            Direction::Up => '↑',
-            Direction::Down => '↓',
-            Direction::Left => '←',
-            Direction::Right => '→',
-        })
-    }
-}
-
-#[derive(Debug, Clone, Copy)]
-enum CommandType {
-    Number(SudokuNumber),
-    CalculatePossibilities,
-    ResolveNakedSingles,
-    Reset,
-    ChangeSelectionMode,
-    ClearBlock,
-    Direction(Direction),
-    Strategy(Strategy),
-}
-
-impl Display for CommandType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            CommandType::Number(sudoku_number) => sudoku_number.to_u8().fmt(f),
-            CommandType::CalculatePossibilities => f.write_str("Space"),
-            CommandType::ResolveNakedSingles => f.write_str("ENTER"),
-            CommandType::Reset => f.write_char('R'),
-            CommandType::ChangeSelectionMode => f.write_char('M'),
-            CommandType::ClearBlock => f.write_char('C'),
-            CommandType::Direction(direction) => direction.fmt(f),
-            CommandType::Strategy(strategy) => strategy.fmt(f),
-        }
-    }
-}
-
 #[derive(Debug, Component)]
 struct HelperBlock {
     command_type: CommandType,
 }
 
 impl HelperBlock {
-    fn new(command_type: CommandType) -> Self {
-        Self { command_type }
-    }
-}
-
-#[derive(Debug, Event)]
-struct GameInputs {
-    command_type: CommandType,
-}
-
-impl GameInputs {
     fn new(command_type: CommandType) -> Self {
         Self { command_type }
     }
@@ -317,9 +254,12 @@ impl<'w> ActiveBoardProviderMut<'w> {
     }
 }
 
+#[derive(Debug, Resource)]
+struct CreateBoardVisualSystemId(SystemId<In<Vec2>>);
+
 fn main() {
     App::new()
-        .add_plugins(LoadingPlugin)
+        .add_plugins((LoadingPlugin, InputHandlingPlugin))
         .init_resource::<ActiveBoardsMapping>()
         .init_resource::<ActiveBoardChanged>()
         .init_resource::<SudokuBoardResources>()
@@ -327,10 +267,6 @@ fn main() {
         .init_resource::<SelectedBlock>()
         .init_resource::<Stats>()
         .init_resource::<EngagingStrategyMap>()
-        .insert_resource(ChangeSelectionTimer(Timer::new(
-            Duration::from_millis(100),
-            TimerMode::Repeating,
-        )))
         .init_resource::<BoardsStateMap>()
         .init_resource::<ShouldUpdateAnyway>()
         .add_observer(update_boards_list)
@@ -339,9 +275,13 @@ fn main() {
         .add_observer(
             |event: On<SudokuBoardVisualSpawned>,
              mut commands: Commands,
-             active_visual: Option<Res<ActiveBoardVisual>>,
-             mut active_board_mapping: ResMut<ActiveBoardsMapping>| {
-                if active_visual.is_none() {
+             active_visual: Option<ResMut<ActiveBoardVisual>>,
+             mut active_board_mapping: ResMut<ActiveBoardsMapping>,
+             mut active_board_changed: ResMut<ActiveBoardChanged>| {
+                if let Some(mut active_visual) = active_visual {
+                    active_visual.0 = event.0;
+                    active_board_changed.0 = true;
+                } else {
                     commands.insert_resource(ActiveBoardVisual(event.0));
                     active_board_mapping.insert(
                         event.0,
@@ -357,39 +297,6 @@ fn main() {
         .add_systems(
             OnEnter(AppState::Ready),
             (setup_game, check_foundation_squares, check_block_squares).chain(),
-        )
-        .add_systems(
-            Update,
-            ((
-                change_selected_block.run_if(
-                    input_pressed(KeyCode::ArrowDown)
-                        .or(input_pressed(KeyCode::ArrowUp))
-                        .or(input_pressed(KeyCode::ArrowLeft))
-                        .or(input_pressed(KeyCode::ArrowRight)),
-                ),
-                change_selection_mode.run_if(input_just_pressed(KeyCode::KeyM)),
-                (
-                    engage_strategy.run_if(
-                        input_just_pressed(KeyCode::KeyH).or(input_just_pressed(KeyCode::KeyP)),
-                    ),
-                    update_possibilities.run_if(input_just_pressed(KeyCode::Space)),
-                    resolve_satisfied.run_if(input_just_pressed(KeyCode::Enter)),
-                    manually_clear_block.run_if(input_just_pressed(KeyCode::KeyC)),
-                    digit_1_to_9_clicked.run_if(
-                        input_just_pressed(KeyCode::Digit1)
-                            .or(input_just_pressed(KeyCode::Digit2))
-                            .or(input_just_pressed(KeyCode::Digit3))
-                            .or(input_just_pressed(KeyCode::Digit4))
-                            .or(input_just_pressed(KeyCode::Digit5))
-                            .or(input_just_pressed(KeyCode::Digit6))
-                            .or(input_just_pressed(KeyCode::Digit7))
-                            .or(input_just_pressed(KeyCode::Digit8))
-                            .or(input_just_pressed(KeyCode::Digit9)),
-                    ),
-                ),
-                reset.run_if(input_just_pressed(KeyCode::KeyR)),
-            )
-                .run_if(in_state(AppState::Ready)),),
         )
         .add_systems(
             PostUpdate,
@@ -416,6 +323,18 @@ fn main() {
         )
         .run();
 }
+
+const AVAILABLE_COMMANDS: [CommandType; 9] = [
+    CommandType::CalculatePossibilities,
+    CommandType::Direction(Direction::Left),
+    CommandType::ResolveNakedSingles,
+    CommandType::Direction(Direction::Up),
+    CommandType::Reset,
+    CommandType::Direction(Direction::Down),
+    CommandType::ChangeSelectionMode,
+    CommandType::Direction(Direction::Right),
+    CommandType::ClearBlock,
+];
 
 fn setup_game(
     mut commands: Commands,
@@ -454,14 +373,11 @@ fn setup_game(
         });
     }
 
-    let spawn_board_system = commands.register_system(spawn_sudoku_board_visual);
-
+    // Add create board system id resources and use it once.
+    let spawn_board_system: SystemId<In<Vec2>> =
+        commands.register_system(spawn_sudoku_board_visual);
     commands.run_system_with(spawn_board_system, Vec2::default().with_y(50.));
-    commands.run_system_with(spawn_board_system, vec2(650., -600.));
-    commands.run_system_with(spawn_board_system, vec2(-650., -350.));
-    commands.run_system_with(spawn_board_system, vec2(845., 70.));
-    // commands.run_system_with(spawn_board_system, vec2(-930., 320.));
-    commands.run_system_with(spawn_board_system, vec2(0., -740.));
+    commands.insert_resource(CreateBoardVisualSystemId(spawn_board_system));
 
     commands.spawn(TextBundle::new(
         "Sudoku",
@@ -471,59 +387,52 @@ fn setup_game(
         Transform::from_translation(Vec3::default().with_y(460.)),
     ));
 
-    commands
-        .spawn(TextBundle::new(
+    commands.spawn((
+        TextBundle::new(
             "Mistakes: ",
             defaults_assets.default_font.clone(),
             20.,
             WHITE,
             Transform::from_translation(Vec3::default().with_y(400.)),
-        ))
-        .with_children(|parent| {
-            parent.spawn((
-                TextSpan::new("0 (Numbers) / 0 (Possibilities)"),
+        ),
+        children![(
+            TextSpan::new("0 (Numbers) / 0 (Possibilities)"),
+            TextFont {
+                font: defaults_assets.default_font.clone(),
+                font_size: 20.,
+                ..default()
+            },
+            TextColor(Color::from(RED)),
+            MistakesCountText,
+        )],
+    ));
+
+    commands.spawn((
+        Mesh2d(meshes.add(Rectangle::new(630., 110.))),
+        MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+        Transform::default().with_translation(Vec3 {
+            y: -340.,
+            ..Default::default()
+        }),
+        children![(
+            Mesh2d(meshes.add(Rectangle::new(610., 90.))),
+            MeshMaterial2d(defaults.default_block_color.clone()),
+            Transform::from_translation(Vec3::Z),
+            children![(
+                Text2d::new(DEFAULT_HELP_TEXT.to_string()),
                 TextFont {
                     font: defaults_assets.default_font.clone(),
                     font_size: 20.,
                     ..default()
                 },
-                TextColor(Color::from(RED)),
-                MistakesCountText,
-            ));
-        });
-
-    commands
-        .spawn((
-            Mesh2d(meshes.add(Rectangle::new(630., 110.))),
-            MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-            Transform::default().with_translation(Vec3 {
-                y: -340.,
-                ..Default::default()
-            }),
-        ))
-        .with_children(|builder| {
-            builder
-                .spawn((
-                    Mesh2d(meshes.add(Rectangle::new(610., 90.))),
-                    MeshMaterial2d(defaults.default_block_color.clone()),
-                    Transform::from_translation(Vec3::Z),
-                ))
-                .with_children(|builder| {
-                    builder.spawn((
-                        Text2d::new(DEFAULT_HELP_TEXT.to_string()),
-                        TextFont {
-                            font: defaults_assets.default_font.clone(),
-                            font_size: 20.,
-                            ..default()
-                        },
-                        TextColor(defaults.default_base_text_color),
-                        TextLayout::new(Justify::Center, LineBreak::WordBoundary),
-                        TextBounds::new(600., 80.),
-                        Transform::from_translation(Vec3::Z),
-                        HelpText,
-                    ));
-                });
-        });
+                TextColor(defaults.default_base_text_color),
+                TextLayout::new(Justify::Center, LineBreak::WordBoundary),
+                TextBounds::new(600., 80.),
+                Transform::from_translation(Vec3::Z),
+                HelpText,
+            )]
+        ),],
+    ));
 
     commands.spawn(TextBundle::new(
         "Accessibility",
@@ -596,21 +505,9 @@ fn setup_game(
             let width = spawn_info.width;
             let master_index = spawn_info.index;
 
-            let available_commands = [
-                CommandType::CalculatePossibilities,
-                CommandType::Direction(Direction::Left),
-                CommandType::ResolveNakedSingles,
-                CommandType::Direction(Direction::Up),
-                CommandType::Reset,
-                CommandType::Direction(Direction::Down),
-                CommandType::ChangeSelectionMode,
-                CommandType::Direction(Direction::Right),
-                CommandType::ClearBlock,
-            ];
-
             for (index, spawn_info) in square_group_info(width, 5., Default::default()).enumerate()
             {
-                let command_type = available_commands[index];
+                let command_type = AVAILABLE_COMMANDS[index];
                 let command_type_text = command_type.to_string();
                 let char_count = command_type_text.chars().count();
                 let text_width =
@@ -728,6 +625,23 @@ fn setup_game(
         Transform::from_translation(Vec3::default().with_xy(vec2(-420., 330.))),
     ));
 
+    commands.spawn((
+        TextBundle::new(
+            "Heresy,",
+            defaults_assets.default_font.clone(),
+            100.,
+            RED,
+            Transform::default().with_translation(Vec3::default().with_y(120.).with_z(-5.)),
+        ),
+        children![TextBundle::new(
+            "You say?",
+            defaults_assets.default_font.clone(),
+            83.,
+            WHITE,
+            Transform::default().with_translation(Vec3::default().with_y(-80.)),
+        )],
+    ));
+
     commands.trigger(UpdateBoardList);
 }
 
@@ -786,10 +700,15 @@ fn update_boards_list(
     boards_state: Res<BoardsStateMap>,
     info_blocks: Query<Entity, With<BoardInfoBlock>>,
     rnb_block: Query<Entity, With<RequestNewBoardBlock>>,
+    rnbv_block: Query<Entity, With<RequestNewBoardVisual>>,
     visuals: Query<&SudokuBoardVisual>,
 ) {
     if let Ok(rnb) = rnb_block.single() {
         commands.entity(rnb).despawn();
+    }
+
+    if let Ok(rnbv) = rnbv_block.single() {
+        commands.entity(rnbv).despawn();
     }
 
     for block in info_blocks.iter() {
@@ -820,8 +739,7 @@ fn update_boards_list(
                 .boards_mapping
                 .iter()
                 .find(|(_, v)| v == &&id)
-                .map(|(e, _)| visuals.get(*e).ok())
-                .flatten();
+                .and_then(|(e, _)| visuals.get(*e).ok());
 
             latest_y -= 55.;
             let mut spawned = commands.spawn((
@@ -842,12 +760,10 @@ fn update_boards_list(
                             Mesh2d(meshes.add(Rectangle::new(170., 45.))),
                             MeshMaterial2d(if selected {
                                 defaults.selected_resolving_block_color.clone()
+                            } else if finished {
+                                defaults.default_solved_block_color.clone()
                             } else {
-                                if finished {
-                                    defaults.default_solved_block_color.clone()
-                                } else {
-                                    defaults.default_block_color.clone()
-                                }
+                                defaults.default_block_color.clone()
                             }),
                             Transform::from_translation(Vec3::Z),
                         ))
@@ -889,7 +805,7 @@ fn update_boards_list(
         .spawn((
             Mesh2d(meshes.add(Rectangle::new(50., 50.))),
             MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-            Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y - 55.))),
+            Transform::from_translation(Vec3::default().with_xy(vec2(-367., latest_y - 55.))),
             Pickable::default(),
             RequestNewBoardBlock,
         ))
@@ -906,6 +822,36 @@ fn update_boards_list(
                 .with_children(|builder| {
                     builder.spawn((
                         Text2d::new("+".to_string()),
+                        font.clone(),
+                        TextColor(defaults.default_base_text_color),
+                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                        Transform::from_translation(Vec3::Z),
+                    ));
+                });
+        });
+
+    font.font_size = 20.;
+    commands
+        .spawn((
+            Mesh2d(meshes.add(Rectangle::new(100., 50.))),
+            MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+            Transform::from_translation(Vec3::default().with_xy(vec2(-447., latest_y - 55.))),
+            Pickable::default(),
+            RequestNewBoardVisual,
+        ))
+        .observe(request_new_board_visual)
+        .observe(request_new_board_visual_over)
+        .observe(on_pointer_out)
+        .with_children(|builder| {
+            builder
+                .spawn((
+                    Mesh2d(meshes.add(Rectangle::new(95., 45.))),
+                    MeshMaterial2d(defaults.default_block_color.clone()),
+                    Transform::from_translation(Vec3::Z),
+                ))
+                .with_children(|builder| {
+                    builder.spawn((
+                        Text2d::new("New city".to_string()),
                         font,
                         TextColor(defaults.default_base_text_color),
                         TextLayout::new(Justify::Center, LineBreak::NoWrap),
@@ -913,6 +859,41 @@ fn update_boards_list(
                     ));
                 });
         });
+}
+
+#[derive(Debug, Component)]
+struct RequestNewBoardVisual;
+
+const AVAILABLE_BOARD_POSITIONS: [Vec2; 5] = [
+    vec2(0., 50.),
+    vec2(650., -600.),
+    vec2(-650., -350.),
+    vec2(845., 70.),
+    vec2(0., -740.),
+];
+
+fn request_new_board_visual(
+    _ev: On<Pointer<Click>>,
+    mut commands: Commands,
+    system_id: Res<CreateBoardVisualSystemId>,
+    visuals: Query<&SudokuBoardVisual>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    let visual_count = visuals.count();
+    if visual_count >= 5 {
+        help_text.0 = "Can't have more than 5 visuals at the same time".to_string();
+        return;
+    }
+
+    let pos = AVAILABLE_BOARD_POSITIONS[visual_count];
+    commands.run_system_with(system_id.0, pos);
+}
+
+fn request_new_board_visual_over(
+    _ev: On<Pointer<Over>>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    help_text.0 = "Will create a new board visual.".to_string();
 }
 
 fn request_new_board(
@@ -1013,6 +994,16 @@ fn check_block_squares(query: Query<(Entity, &SquareIndex), With<Block>>) {
 //     blocks.get_mut(*block_entity).ok()
 // }
 
+fn update_mistakes_text(
+    stats: Res<Stats>,
+    mut mistakes_text: Single<&mut TextSpan, With<MistakesCountText>>,
+) {
+    mistakes_text.0 = format!(
+        "{} (Numbers) / {} (Possibilities)",
+        stats.mistakes, stats.possibility_mistakes
+    );
+}
+
 fn on_should_update_event(
     event: On<ShouldUpdateEvent>,
     mut should_updates: ResMut<ShouldUpdateAnyway>,
@@ -1094,10 +1085,8 @@ fn update_board(
 
     for (row, col) in SudokuNumber::iter_numbers() {
         let block_index = BlockIndex::new(row, col);
-        let block = boards.active_board(&active_board).get_block(&block_index);
-        let snapshot_block = snapshots
-            .active_board(&active_board)
-            .get_block(&block_index);
+        let block = boards.active_board(active_board).get_block(&block_index);
+        let snapshot_block = snapshots.active_board(active_board).get_block(&block_index);
 
         if (block != snapshot_block)
             || active_board_changed.0
@@ -1110,12 +1099,12 @@ fn update_board(
 
             let block_entity = board_visual.get(&block_index);
             if let Some((entity, spawn_info, mut material)) =
-                block_entity.map(|e| blocks.get_mut(*e).ok()).flatten()
+                block_entity.and_then(|e| blocks.get_mut(*e).ok())
             {
                 let (j, i) = block_index.actual_indexes();
 
                 // Update blocks based on finished or not
-                let board_state = boards_state.boards.get(&active_board);
+                let board_state = boards_state.boards.get(active_board);
                 if let Some(state) = board_state
                     && selected.current != (i, j)
                 {
@@ -1188,14 +1177,12 @@ fn update_board(
                                                 {
                                                     if strategy.is_effected() {
                                                         defaults.strategy_effected_color.clone()
+                                                    } else if let Some(color) =
+                                                        strategy_colors.get(&strategy.strategy())
+                                                    {
+                                                        color.background.clone()
                                                     } else {
-                                                        if let Some(color) = strategy_colors
-                                                            .get(&strategy.strategy())
-                                                        {
-                                                            color.background.clone()
-                                                        } else {
-                                                            defaults.strategy_source_color.clone()
-                                                        }
+                                                        defaults.strategy_source_color.clone()
                                                     }
                                                 } else {
                                                     defaults
@@ -1278,7 +1265,7 @@ fn update_board(
     }
     active_board_changed.0 = false;
     if snapshot_should_update {
-        *snapshots.active_board_mut(&active_board) = boards.active_board(&active_board).clone();
+        *snapshots.active_board_mut(active_board) = boards.active_board(active_board).clone();
     }
 }
 
@@ -1295,7 +1282,7 @@ fn final_verification(
         return;
     };
 
-    let board = boards.active_board(&active_board);
+    let board = boards.active_board(active_board);
     if board
         .get_blocks()
         .filter(|f| f.is_unresolved() || f.is_possibilities())
@@ -1303,7 +1290,7 @@ fn final_verification(
         == 0
     {
         if board.verify_board() {
-            if let Some(state) = boards_state.boards.get_mut(&active_board) {
+            if let Some(state) = boards_state.boards.get_mut(active_board) {
                 *state = BoardState::FinishedVerified;
             }
 
@@ -1320,34 +1307,6 @@ fn final_verification(
         } else {
             #[cfg(debug_assertions)]
             println!("Sudoku has mistakes!");
-        }
-    }
-}
-
-#[derive(Resource)]
-struct ChangeSelectionTimer(Timer);
-
-fn change_selected_block(
-    mut commands: Commands,
-    time: Res<Time>,
-    mut timer: ResMut<ChangeSelectionTimer>,
-    keyboard_input: Res<ButtonInput<KeyCode>>,
-) {
-    if timer.0.tick(time.delta()).just_finished() {
-        if keyboard_input.pressed(KeyCode::ArrowLeft) {
-            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Left)));
-        }
-
-        if keyboard_input.pressed(KeyCode::ArrowRight) {
-            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Right)));
-        }
-
-        if keyboard_input.pressed(KeyCode::ArrowDown) {
-            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Down)));
-        }
-
-        if keyboard_input.pressed(KeyCode::ArrowUp) {
-            commands.trigger(GameInputs::new(CommandType::Direction(Direction::Up)));
         }
     }
 }
@@ -1390,86 +1349,6 @@ fn change_selected_block(
 //     }
 // );
 
-fn update_possibilities(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::Space) {
-        commands.trigger(GameInputs::new(CommandType::CalculatePossibilities));
-    }
-}
-
-fn engage_strategy(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::KeyH) {
-        commands.trigger(GameInputs::new(CommandType::Strategy(
-            Strategy::HiddenSingle,
-        )));
-    }
-
-    if keyboard_input.just_pressed(KeyCode::KeyP) {
-        commands.trigger(GameInputs::new(CommandType::Strategy(Strategy::NakedPair)));
-    }
-}
-
-fn resolve_satisfied(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::Enter) {
-        commands.trigger(GameInputs::new(CommandType::ResolveNakedSingles));
-    }
-}
-
-fn reset(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::KeyR) {
-        commands.trigger(GameInputs::new(CommandType::Reset));
-    }
-}
-
-fn change_selection_mode(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::KeyM) {
-        commands.trigger(GameInputs::new(CommandType::ChangeSelectionMode));
-    }
-}
-
-fn manually_clear_block(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::KeyC) {
-        commands.trigger(GameInputs::new(CommandType::ClearBlock));
-    }
-}
-
-fn digit_1_to_9_clicked(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if let Some(sudoku_number) =
-        if keyboard_input.any_just_pressed([KeyCode::Digit1, KeyCode::Numpad1]) {
-            Some(SudokuNumber::One)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit2, KeyCode::Numpad2]) {
-            Some(SudokuNumber::Two)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit3, KeyCode::Numpad3]) {
-            Some(SudokuNumber::Three)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit4, KeyCode::Numpad4]) {
-            Some(SudokuNumber::Four)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit5, KeyCode::Numpad5]) {
-            Some(SudokuNumber::Five)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit6, KeyCode::Numpad6]) {
-            Some(SudokuNumber::Six)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit7, KeyCode::Numpad7]) {
-            Some(SudokuNumber::Seven)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit8, KeyCode::Numpad8]) {
-            Some(SudokuNumber::Eight)
-        } else if keyboard_input.any_just_pressed([KeyCode::Digit9, KeyCode::Numpad9]) {
-            Some(SudokuNumber::Nine)
-        } else {
-            None
-        }
-    {
-        commands.trigger(GameInputs::new(CommandType::Number(sudoku_number)));
-    }
-}
-
-fn update_mistakes_text(
-    stats: Res<Stats>,
-    mut mistakes_text: Single<&mut TextSpan, With<MistakesCountText>>,
-) {
-    mistakes_text.0 = format!(
-        "{} (Numbers) / {} (Possibilities)",
-        stats.mistakes, stats.possibility_mistakes
-    );
-}
-
 #[derive(Debug, Component)]
 struct Foundation;
 
@@ -1492,7 +1371,7 @@ fn on_block_clicked(
 ) {
     if let Ok((related_visual, index)) = indexes.get(over.entity) {
         if let Some(mut visual_id) = active_visual {
-            if &visual_id.0 != &related_visual.0 {
+            if visual_id.0 != related_visual.0 {
                 visual_id.0 = related_visual.0;
                 active_board_changed.0 = true;
             }
@@ -1539,10 +1418,10 @@ fn on_game_input(
         return;
     };
 
-    let board = boards.active_board_mut(&active_board);
-    let board_state = boards_state.boards.get_mut(&active_board);
+    let board = boards.active_board_mut(active_board);
+    let board_state = boards_state.boards.get_mut(active_board);
 
-    match input.event().command_type {
+    match input.event().command_type() {
         CommandType::Number(sudoku_number) => {
             if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
                 // Board in finished state do nothing.
@@ -1940,9 +1819,73 @@ fn spawn_sudoku_board_visual(
         Anchor::CENTER_LEFT,
     ));
 
+    // Close btn
+    spawned.with_children(|builder| {
+        builder
+            .spawn((
+                Mesh2d(meshes.add(Rectangle::new(30., 30.))),
+                MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                Transform::from_translation(Vec3::default().with_xy(vec2(290., 320.))),
+                Pickable::default(),
+                DeleteBoardVisual(visual_id),
+                children![(
+                    Mesh2d(meshes.add(Rectangle::new(25., 25.))),
+                    MeshMaterial2d(defaults.default_block_color.clone()),
+                    Transform::from_translation(Vec3::Z),
+                    children![TextBundle::new(
+                        "x",
+                        defaults_assets.default_font.clone(),
+                        30.,
+                        BLACK,
+                        Transform::from_translation(Vec3::default().with_y(1.)),
+                    )]
+                )],
+            ))
+            .observe(delete_board_visual)
+            .observe(delete_board_visual_over)
+            .observe(on_pointer_out);
+    });
+
     spawned.insert(BlocksAccessInfo::new(access_infos));
     // spawned.observe(on_drag);
     commands.trigger(SudokuBoardVisualSpawned(visual_id));
+}
+
+#[derive(Debug, Component)]
+struct DeleteBoardVisual(Entity);
+
+fn delete_board_visual(
+    ev: On<Pointer<Click>>,
+    mut commands: Commands,
+    delete_btns: Query<&DeleteBoardVisual>,
+    visuals: Query<Entity, With<SudokuBoardVisual>>,
+    active_visual: Option<ResMut<ActiveBoardVisual>>,
+    mut active_board_mapping: ResMut<ActiveBoardsMapping>,
+    mut active_board_changed: ResMut<ActiveBoardChanged>,
+) {
+    if let Ok(delete_btn) = delete_btns.get(ev.entity) {
+        commands.entity(delete_btn.0).despawn();
+
+        active_board_mapping.0.remove(&delete_btn.0);
+
+        if let Some(mut active_visual) = active_visual
+            && active_visual.0 == delete_btn.0
+        {
+            if let Some(other_visual) = visuals.iter().next() {
+                active_visual.0 = other_visual;
+                active_board_changed.0 = true;
+            } else {
+                commands.remove_resource::<ActiveBoardVisual>();
+            }
+        }
+    }
+}
+
+fn delete_board_visual_over(
+    _ev: On<Pointer<Over>>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    help_text.0 = "Will delete this board!".to_string();
 }
 
 // fn on_drag(event: On<Pointer<Drag>>) {}

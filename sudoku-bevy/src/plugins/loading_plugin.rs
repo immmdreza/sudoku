@@ -13,15 +13,8 @@ use sudoku_solver::strategies::Strategy;
 
 use crate::{
     pancam::{DirectionKeys, PanCam, PanCamPlugin},
-    plugins::shared::TextBundle,
+    plugins::shared::{AppState, TextBundle},
 };
-
-#[derive(Debug, States, Default, PartialEq, Eq, Hash, Clone)]
-pub enum AppState {
-    #[default]
-    Loading,
-    Ready,
-}
 
 #[derive(Debug, Resource, Default)]
 pub struct DefaultMaterials {
