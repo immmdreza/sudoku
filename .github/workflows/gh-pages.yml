@@ -23,7 +23,7 @@ jobs:
         run: cargo install --locked wasm-bindgen-cli
 
       - name: Build for WASM (no dynamic linking)
-        run: trunk build --release --public-url /sudoku/ --no-default-features
+        run: trunk build --release --public-url /sudoku/ --no-default-features --features wasm
         working-directory: sudoku-bevy
 
       - name: Deploy to GitHub Pages
