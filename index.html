@@ -4,8 +4,8 @@
     
     
 <script type="module">
-import init, * as bindings from '/sudoku/sudoku-bevy-3e61a02f8ad33709.js';
-const wasm = await init({ module_or_path: '/sudoku/sudoku-bevy-3e61a02f8ad33709_bg.wasm' });
+import init, * as bindings from '/sudoku/sudoku-bevy-16e2387b08fb9221.js';
+const wasm = await init({ module_or_path: '/sudoku/sudoku-bevy-16e2387b08fb9221_bg.wasm' });
 
 
 window.wasmBindings = bindings;
@@ -14,5 +14,5 @@ window.wasmBindings = bindings;
 dispatchEvent(new CustomEvent("TrunkApplicationStarted", {detail: {wasm}}));
 
 </script>
-  <link rel="modulepreload" href="/sudoku/sudoku-bevy-3e61a02f8ad33709.js" crossorigin="anonymous" integrity="sha384-SPM23gsmaWToau8h/zBua/EFqvk7f4QJ2cGESCeKg9bOLmK2q8bo+iCZp6l8pE/h"><link rel="preload" href="/sudoku/sudoku-bevy-3e61a02f8ad33709_bg.wasm" crossorigin="anonymous" integrity="sha384-nxVIdwsuEoDHs5ZpuHagm6FivwSfRDaCRXGoV2ToopsX2rw5r+hb2MlZsJeLStlL" as="fetch" type="application/wasm"></head>
+  <link rel="modulepreload" href="/sudoku/sudoku-bevy-16e2387b08fb9221.js" crossorigin="anonymous" integrity="sha384-mM9J6jL1Mqz3bijueOkm1WsA66cWHWDl0YKY6m92TXikJJHbmKNqMLZ6VJ4LpMkb"><link rel="preload" href="/sudoku/sudoku-bevy-16e2387b08fb9221_bg.wasm" crossorigin="anonymous" integrity="sha384-efsQmmGRlu9xwoNY7FW3zz42cJ0dphyOG1ZqXQeNB3scpiBJ3hCUc1418BFoijLO" as="fetch" type="application/wasm"></head>
 </html>
