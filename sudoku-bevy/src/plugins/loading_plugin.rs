@@ -1,5 +1,6 @@
 use bevy::{
     asset::LoadState,
+    camera_controller::pan_camera::{PanCamera, PanCameraPlugin},
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, RED, WHITE, YELLOW},
@@ -11,10 +12,7 @@ use bevy::{
 };
 use sudoku_solver::strategies::Strategy;
 
-use crate::{
-    pancam::{DirectionKeys, PanCam, PanCamPlugin},
-    plugins::shared::{AppState, TextBundle},
-};
+use crate::plugins::shared::{AppState, TextBundle};
 
 #[derive(Debug, Resource, Default)]
 pub struct DefaultMaterials {
@@ -97,7 +95,7 @@ impl Plugin for LoadingPlugin {
             //     ..Default::default()
             // }),
             MeshPickingPlugin,
-            PanCamPlugin,
+            PanCameraPlugin,
         ))
         .insert_resource(MeshPickingSettings {
             require_markers: true,
@@ -165,23 +163,24 @@ fn setup_asset_loading(
         Camera2d,
         MeshPickingCamera,
         Projection::Orthographic(ortho),
-        PanCam {
-            grab_buttons: vec![MouseButton::Left], // which buttons should drag the camera
-            move_keys: DirectionKeys {
-                // the keyboard buttons used to move the camera
-                up: vec![KeyCode::KeyW], // initalize the struct like this or use the provided methods for
-                down: vec![KeyCode::KeyS], // common key combinations
-                left: vec![KeyCode::KeyA],
-                right: vec![KeyCode::KeyD],
-            },
-            min_scale: 1., // prevent the camera from zooming too far in
-            max_scale: 5., // prevent the camera from zooming too far out
-            min_x: -1500., // minimum x position of the camera window
-            max_x: 1500.,  // maximum x position of the camera window
-            min_y: -1500., // minimum y position of the camera window
-            max_y: 1500.,  // maximum y position of the camera window
-            ..Default::default()
-        },
+        PanCamera::default(),
+        // PanCam {
+        //     grab_buttons: vec![MouseButton::Left], // which buttons should drag the camera
+        //     move_keys: DirectionKeys {
+        //         // the keyboard buttons used to move the camera
+        //         up: vec![KeyCode::KeyW], // initalize the struct like this or use the provided methods for
+        //         down: vec![KeyCode::KeyS], // common key combinations
+        //         left: vec![KeyCode::KeyA],
+        //         right: vec![KeyCode::KeyD],
+        //     },
+        //     min_scale: 1., // prevent the camera from zooming too far in
+        //     max_scale: 5., // prevent the camera from zooming too far out
+        //     min_x: -1500., // minimum x position of the camera window
+        //     max_x: 1500.,  // maximum x position of the camera window
+        //     min_y: -1500., // minimum y position of the camera window
+        //     max_y: 1500.,  // maximum y position of the camera window
+        //     ..Default::default()
+        // },
     ));
 
     commands.spawn((

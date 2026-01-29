@@ -45,7 +45,16 @@ impl Plugin for InputHandlingPlugin {
                             .or(input_just_pressed(KeyCode::Digit6))
                             .or(input_just_pressed(KeyCode::Digit7))
                             .or(input_just_pressed(KeyCode::Digit8))
-                            .or(input_just_pressed(KeyCode::Digit9)),
+                            .or(input_just_pressed(KeyCode::Digit9))
+                            .or(input_just_pressed(KeyCode::Numpad1))
+                            .or(input_just_pressed(KeyCode::Numpad2))
+                            .or(input_just_pressed(KeyCode::Numpad3))
+                            .or(input_just_pressed(KeyCode::Numpad4))
+                            .or(input_just_pressed(KeyCode::Numpad5))
+                            .or(input_just_pressed(KeyCode::Numpad6))
+                            .or(input_just_pressed(KeyCode::Numpad7))
+                            .or(input_just_pressed(KeyCode::Numpad8))
+                            .or(input_just_pressed(KeyCode::Numpad9)),
                     ),
                 ),
                 reset.run_if(input_just_pressed(KeyCode::KeyR)),
