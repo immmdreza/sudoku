@@ -6,9 +6,11 @@ edition = "2024"
 [features]
 default = ["dynamic_linking"]
 dynamic_linking = ["bevy/dynamic_linking", "bevy_dylib"]
+wasm = ["getrandom", "getrandom/wasm_js"]
 
 [dependencies]
 rand = "*"
+getrandom = { version = "*", optional = true }
 sudoku-solver = { version = "0.2.0", path = "../sudoku-solver" }
 bevy = { version = "0.18.0-rc.1", default-features = false, features = ["2d"] }
 bevy_dylib = { version = "0.18.0-rc.1", optional = true }
