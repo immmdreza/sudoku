@@ -7,7 +7,6 @@ use bevy::{
 use rand::seq::IndexedRandom;
 use sudoku_solver::BlockIndex;
 
-pub mod pancam;
 pub mod plugins;
 
 #[derive(Debug, Component, Deref)]

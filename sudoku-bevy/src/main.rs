@@ -276,18 +276,18 @@ fn main() {
         .add_observer(on_game_input)
         .add_observer(on_should_update_event)
         .add_observer(
-            |event: On<SudokuBoardVisualSpawned>,
+            |event: On<Add, SudokuBoardVisual>,
              mut commands: Commands,
              active_visual: Option<ResMut<ActiveBoardVisual>>,
              mut active_board_mapping: ResMut<ActiveBoardsMapping>,
              mut active_board_changed: ResMut<ActiveBoardChanged>| {
                 if let Some(mut active_visual) = active_visual {
-                    active_visual.0 = event.0;
+                    active_visual.0 = event.entity;
                     active_board_changed.0 = true;
                 } else {
-                    commands.insert_resource(ActiveBoardVisual(event.0));
+                    commands.insert_resource(ActiveBoardVisual(event.entity));
                     active_board_mapping.insert(
-                        event.0,
+                        event.entity,
                         BoardId {
                             difficulty: Some(SudokuBoardDifficulty::Normal),
                             index: 0,
@@ -1726,9 +1726,6 @@ fn square_group_info(
     })
 }
 
-#[derive(Debug, Event)]
-struct SudokuBoardVisualSpawned(Entity);
-
 fn spawn_sudoku_board_visual(
     center: In<Vec2>,
     mut commands: Commands,
@@ -1850,8 +1847,6 @@ fn spawn_sudoku_board_visual(
     });
 
     spawned.insert(BlocksAccessInfo::new(access_infos));
-    // spawned.observe(on_drag);
-    commands.trigger(SudokuBoardVisualSpawned(visual_id));
 }
 
 #[derive(Debug, Component)]
