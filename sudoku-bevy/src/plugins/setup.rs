@@ -98,6 +98,8 @@ impl Plugin for SetupPlugin {
             MeshPickingPlugin,
             PanCameraPlugin,
         ))
+        // Changes update mode to reactive as it should be.
+        // This will greatly reduce CPU usage.
         .insert_resource(WinitSettings::desktop_app())
         .insert_resource(MeshPickingSettings {
             require_markers: true,
