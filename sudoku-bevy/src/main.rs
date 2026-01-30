@@ -652,14 +652,23 @@ fn active_board_visual_changed(
     mut commands: Commands,
     active_visual: Res<ActiveBoardVisual>,
     defaults: If<Res<DefaultMaterials>>,
-    mut visuals: Query<(Entity, &mut MeshMaterial2d<ColorMaterial>), With<SudokuBoardVisual>>,
+    mut visuals: Query<
+        (Entity, &Transform, &mut MeshMaterial2d<ColorMaterial>),
+        With<SudokuBoardVisual>,
+    >,
+    mut camera: Query<&mut Transform, (With<Camera>, Without<SudokuBoardVisual>)>,
 ) {
     #[cfg(debug_assertions)]
     println!("Active  board changed.");
 
-    for (entity, mut material) in visuals.iter_mut() {
+    for (entity, transform, mut material) in visuals.iter_mut() {
         if entity == active_visual.0 {
             material.0 = defaults.default_active_board_color.clone();
+
+            if let Ok(mut camera) = camera.single_mut() {
+                camera.translation.x = transform.translation.x;
+                camera.translation.y = transform.translation.y;
+            }
         } else {
             material.0 = defaults.default_deactivate_board_color.clone();
         }
@@ -1575,6 +1584,10 @@ fn on_game_input(
         CommandType::Strategy(strategy) => {
             if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
                 // Board in finished state do nothing.
+                return;
+            }
+
+            if board.get_blocks().filter(|x| x.is_possibilities()).count() == 0 {
                 return;
             }
 

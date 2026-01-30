@@ -98,9 +98,10 @@ impl Plugin for SetupPlugin {
             MeshPickingPlugin,
             PanCameraPlugin,
         ))
-        // Changes update mode to reactive as it should be.
-        // This will greatly reduce CPU usage.
-        .insert_resource(WinitSettings::desktop_app())
+        // // Changes update mode to reactive as it should be.
+        // // This will greatly reduce CPU usage.
+        // // But this mess up with pan camera
+        // .insert_resource(WinitSettings::desktop_app())
         .insert_resource(MeshPickingSettings {
             require_markers: true,
             ..Default::default()
@@ -167,24 +168,11 @@ fn setup_asset_loading(
         Camera2d,
         MeshPickingCamera,
         Projection::Orthographic(ortho),
-        PanCamera::default(),
-        // PanCam {
-        //     grab_buttons: vec![MouseButton::Left], // which buttons should drag the camera
-        //     move_keys: DirectionKeys {
-        //         // the keyboard buttons used to move the camera
-        //         up: vec![KeyCode::KeyW], // initalize the struct like this or use the provided methods for
-        //         down: vec![KeyCode::KeyS], // common key combinations
-        //         left: vec![KeyCode::KeyA],
-        //         right: vec![KeyCode::KeyD],
-        //     },
-        //     min_scale: 1., // prevent the camera from zooming too far in
-        //     max_scale: 5., // prevent the camera from zooming too far out
-        //     min_x: -1500., // minimum x position of the camera window
-        //     max_x: 1500.,  // maximum x position of the camera window
-        //     min_y: -1500., // minimum y position of the camera window
-        //     max_y: 1500.,  // maximum y position of the camera window
-        //     ..Default::default()
-        // },
+        PanCamera {
+            key_rotate_ccw: None,
+            key_rotate_cw: None,
+            ..Default::default()
+        },
     ));
 
     commands.spawn((
