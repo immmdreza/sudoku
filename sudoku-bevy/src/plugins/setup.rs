@@ -9,6 +9,7 @@ use bevy::{
     platform::collections::HashMap,
     prelude::*,
     window::{EnabledButtons, WindowTheme},
+    winit::WinitSettings,
 };
 use sudoku_solver::strategies::Strategy;
 
@@ -68,9 +69,9 @@ impl BlockColorInfo {
 pub struct StrategyMarkerColors(pub HashMap<Strategy, BlockColorInfo>);
 
 /// This actually takes care of adding default plugins.
-pub struct LoadingPlugin;
+pub struct SetupPlugin;
 
-impl Plugin for LoadingPlugin {
+impl Plugin for SetupPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             DefaultPlugins.set(WindowPlugin {
@@ -97,6 +98,7 @@ impl Plugin for LoadingPlugin {
             MeshPickingPlugin,
             PanCameraPlugin,
         ))
+        .insert_resource(WinitSettings::desktop_app())
         .insert_resource(MeshPickingSettings {
             require_markers: true,
             ..Default::default()

@@ -17,7 +17,7 @@ use sudoku_bevy::{
     BlocksAccessInfo, SquareIndex, gen_random_city_name,
     plugins::{
         input_handling::InputHandlingPlugin,
-        loading_plugin::{DefaultAssets, DefaultMaterials, LoadingPlugin, StrategyMarkerColors},
+        setup::{DefaultAssets, DefaultMaterials, SetupPlugin, StrategyMarkerColors},
         shared::{AppState, CommandType, Direction, GameInputs, TextBundle},
     },
 };
@@ -262,7 +262,7 @@ struct CreateBoardVisualSystemId(SystemId<In<Vec2>>);
 
 fn main() {
     App::new()
-        .add_plugins((LoadingPlugin, InputHandlingPlugin))
+        .add_plugins((SetupPlugin, InputHandlingPlugin))
         .init_resource::<ActiveBoardsMapping>()
         .init_resource::<ActiveBoardChanged>()
         .init_resource::<SudokuBoardResources>()
