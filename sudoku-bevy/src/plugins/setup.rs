@@ -9,7 +9,6 @@ use bevy::{
     platform::collections::HashMap,
     prelude::*,
     window::{EnabledButtons, WindowTheme},
-    winit::WinitSettings,
 };
 use sudoku_solver::strategies::Strategy;
 
@@ -68,6 +67,9 @@ impl BlockColorInfo {
 #[derive(Debug, Resource, Default, Deref, DerefMut)]
 pub struct StrategyMarkerColors(pub HashMap<Strategy, BlockColorInfo>);
 
+#[derive(Debug, Resource, Deref, DerefMut, Default)]
+pub struct MouseWorldPosition(pub Vec2);
+
 /// This actually takes care of adding default plugins.
 pub struct SetupPlugin;
 
@@ -106,6 +108,7 @@ impl Plugin for SetupPlugin {
             require_markers: true,
             ..Default::default()
         })
+        .init_resource::<MouseWorldPosition>()
         .init_resource::<DefaultAssets>()
         .init_resource::<DefaultMaterials>()
         .init_resource::<StrategyMarkerColors>()
@@ -115,7 +118,29 @@ impl Plugin for SetupPlugin {
         .add_systems(
             Update,
             check_assets_ready.run_if(in_state(AppState::Loading)),
+        )
+        .add_systems(
+            PreUpdate,
+            track_mouse_position.run_if(in_state(AppState::Ready)),
         );
+    }
+}
+
+fn track_mouse_position(
+    mut mouse_world_position: ResMut<MouseWorldPosition>,
+    camera_query: Single<(&Camera, &GlobalTransform)>,
+    window: Single<&Window>,
+) {
+    let (camera, camera_transform) = *camera_query;
+
+    if let Some(cursor_position) = window.cursor_position()
+        // Calculate a world position based on the cursor's position.
+        && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_position)
+        // To test Camera::world_to_viewport, convert result back to viewport space and then back to world space.
+        && let Ok(viewport_check) = camera.world_to_viewport(camera_transform, world_pos.extend(0.0))
+        && let Ok(_) = camera.viewport_to_world_2d(camera_transform, viewport_check.xy())
+    {
+        mouse_world_position.0 = world_pos;
     }
 }
 

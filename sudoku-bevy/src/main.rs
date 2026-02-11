@@ -1,6 +1,6 @@
 #![allow(clippy::too_many_arguments)]
 
-use std::{collections::HashMap, fmt::Display};
+use std::{collections::HashMap, fmt::Display, time::Duration};
 
 use bevy::{
     color::palettes::{
@@ -8,16 +8,20 @@ use bevy::{
         tailwind::ORANGE_300,
     },
     ecs::system::{SystemId, SystemParam},
+    input::common_conditions::input_just_pressed,
     log::{self},
     prelude::*,
     sprite::Anchor,
     text::TextBounds,
 };
+use bevy_tweening::{EntityCommandsTweeningExtensions, TweeningPlugin};
 use sudoku_bevy::{
     BlocksAccessInfo, SquareIndex, gen_random_city_name,
     plugins::{
         input_handling::InputHandlingPlugin,
-        setup::{DefaultAssets, DefaultMaterials, SetupPlugin, StrategyMarkerColors},
+        setup::{
+            DefaultAssets, DefaultMaterials, MouseWorldPosition, SetupPlugin, StrategyMarkerColors,
+        },
         shared::{AppState, CommandType, Direction, GameInputs, TextBundle},
     },
 };
@@ -262,7 +266,7 @@ struct CreateBoardVisualSystemId(SystemId<In<Vec2>>);
 
 fn main() {
     App::new()
-        .add_plugins((SetupPlugin, InputHandlingPlugin))
+        .add_plugins((SetupPlugin, InputHandlingPlugin, TweeningPlugin))
         .init_resource::<ActiveBoardsMapping>()
         .init_resource::<ActiveBoardChanged>()
         .init_resource::<SudokuBoardResources>()
@@ -320,6 +324,7 @@ fn main() {
                 ),
                 active_board_visual_changed
                     .run_if(resource_exists_and_changed::<ActiveBoardVisual>),
+                relocate_camera.run_if(input_just_pressed(MouseButton::Right)),
             )
                 .chain()
                 .run_if(in_state(AppState::Ready)),
@@ -648,6 +653,26 @@ fn setup_game(
     commands.trigger(UpdateBoardList);
 }
 
+fn relocate_camera(
+    mut commands: Commands,
+    mouse_world_position: Res<MouseWorldPosition>,
+    mouse_input: Res<ButtonInput<MouseButton>>,
+    camera: Query<Entity, (With<Camera>, Without<SudokuBoardVisual>)>,
+) {
+    if mouse_input.just_pressed(MouseButton::Right) {
+        if let Ok(camera_entity) = camera.single() {
+            commands.entity(camera_entity).move_to(
+                Vec3 {
+                    z: Default::default(),
+                    ..mouse_world_position.0.extend(0.)
+                },
+                Duration::from_secs(1),
+                EaseFunction::QuadraticInOut,
+            );
+        }
+    }
+}
+
 fn active_board_visual_changed(
     mut commands: Commands,
     active_visual: Res<ActiveBoardVisual>,
@@ -656,7 +681,7 @@ fn active_board_visual_changed(
         (Entity, &Transform, &mut MeshMaterial2d<ColorMaterial>),
         With<SudokuBoardVisual>,
     >,
-    mut camera: Query<&mut Transform, (With<Camera>, Without<SudokuBoardVisual>)>,
+    camera: Query<Entity, (With<Camera>, Without<SudokuBoardVisual>)>,
 ) {
     #[cfg(debug_assertions)]
     println!("Active  board changed.");
@@ -665,9 +690,15 @@ fn active_board_visual_changed(
         if entity == active_visual.0 {
             material.0 = defaults.default_active_board_color.clone();
 
-            if let Ok(mut camera) = camera.single_mut() {
-                camera.translation.x = transform.translation.x;
-                camera.translation.y = transform.translation.y;
+            if let Ok(camera) = camera.single() {
+                commands.entity(camera).move_to(
+                    Vec3 {
+                        z: Default::default(),
+                        ..transform.translation
+                    },
+                    Duration::from_secs(2),
+                    EaseFunction::QuadraticInOut,
+                );
             }
         } else {
             material.0 = defaults.default_deactivate_board_color.clone();

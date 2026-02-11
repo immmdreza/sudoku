@@ -17,4 +17,5 @@ bevy = { version = "0.18.0", default-features = false, features = [
     "pan_camera",
 ] }
 bevy_dylib = { version = "0.18.0", optional = true }
+bevy_tweening = "0.15"
 sudoku-samples = { version = "0.1.0", path = "../sudoku-samples" }
