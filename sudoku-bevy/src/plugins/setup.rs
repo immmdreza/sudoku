@@ -1,6 +1,5 @@
 use bevy::{
     asset::LoadState,
-    camera_controller::pan_camera::{PanCamera, PanCameraPlugin},
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, RED, WHITE, YELLOW},
@@ -10,6 +9,7 @@ use bevy::{
     prelude::*,
     window::{EnabledButtons, WindowTheme},
 };
+use bevy_pancam::{PanCam, PanCamPlugin};
 use sudoku_solver::strategies::Strategy;
 
 use crate::plugins::shared::{AppState, TextBundle};
@@ -98,7 +98,7 @@ impl Plugin for SetupPlugin {
             //     ..Default::default()
             // }),
             MeshPickingPlugin,
-            PanCameraPlugin,
+            PanCamPlugin,
         ))
         // // Changes update mode to reactive as it should be.
         // // This will greatly reduce CPU usage.
@@ -193,9 +193,13 @@ fn setup_asset_loading(
         Camera2d,
         MeshPickingCamera,
         Projection::Orthographic(ortho),
-        PanCamera {
-            key_rotate_ccw: None,
-            key_rotate_cw: None,
+        PanCam {
+            min_scale: 1., // prevent the camera from zooming too far in
+            max_scale: 5., // prevent the camera from zooming too far out
+            min_x: -2000., // minimum x position of the camera window
+            max_x: 2000.,  // maximum x position of the camera window
+            min_y: -2000., // minimum y position of the camera window
+            max_y: 2000.,  // maximum y position of the camera window
             ..Default::default()
         },
     ));
