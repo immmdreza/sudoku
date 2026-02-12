@@ -12,9 +12,10 @@ use bevy::{
     log::{self},
     prelude::*,
     sprite::Anchor,
+    tasks::futures_lite::StreamExt,
     text::TextBounds,
 };
-use bevy_tweening::{EntityCommandsTweeningExtensions, TweeningPlugin};
+use bevy_tweening::{AnimCompletedEvent, EntityCommandsTweeningExtensions, Tween, TweeningPlugin};
 use sudoku_bevy::{
     BlocksAccessInfo, SquareIndex, gen_random_city_name,
     plugins::{
@@ -204,6 +205,9 @@ struct ActiveBoardText;
 
 #[derive(Debug, Component, Deref, DerefMut)]
 struct BoardInfoBlock(BoardId);
+
+#[derive(Debug, Component)]
+struct BoardInfoBlockVisualText;
 
 #[derive(Debug, Component)]
 struct RequestNewBoardBlock;
@@ -660,15 +664,17 @@ fn relocate_camera(
     camera: Query<Entity, (With<Camera>, Without<SudokuBoardVisual>)>,
 ) {
     if mouse_input.just_pressed(MouseButton::Right) {
-        if let Ok(camera_entity) = camera.single() {
-            commands.entity(camera_entity).move_to(
-                Vec3 {
-                    z: Default::default(),
-                    ..mouse_world_position.0.extend(0.)
-                },
-                Duration::from_secs(1),
-                EaseFunction::QuadraticInOut,
-            );
+        if (mouse_world_position.0.x.abs() < 500.) && (mouse_world_position.0.y.abs() < 500.) {
+            if let Ok(camera_entity) = camera.single() {
+                commands.entity(camera_entity).move_to(
+                    Vec3 {
+                        z: Default::default(),
+                        ..mouse_world_position.0.extend(0.)
+                    },
+                    Duration::from_secs(1),
+                    EaseFunction::QuadraticInOut,
+                );
+            }
         }
     }
 }
@@ -741,56 +747,93 @@ fn update_boards_list(
     defaults_assets: Res<DefaultAssets>,
     boards: Res<SudokuBoardResources>,
     boards_state: Res<BoardsStateMap>,
-    info_blocks: Query<Entity, With<BoardInfoBlock>>,
+    info_blocks: Query<(Entity, &BoardInfoBlock, &Children), With<BoardInfoBlock>>,
+    mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>,
+    mut visual_text: Query<&mut Text2d, With<BoardInfoBlockVisualText>>,
     rnb_block: Query<Entity, With<RequestNewBoardBlock>>,
     rnbv_block: Query<Entity, With<RequestNewBoardVisual>>,
     visuals: Query<&SudokuBoardVisual>,
 ) {
-    if let Ok(rnb) = rnb_block.single() {
-        commands.entity(rnb).despawn();
-    }
-
-    if let Ok(rnbv) = rnbv_block.single() {
-        commands.entity(rnbv).despawn();
-    }
-
-    for block in info_blocks.iter() {
-        commands.entity(block).despawn();
-    }
-
     let mut font = TextFont {
         font: defaults_assets.default_font.clone(),
         font_size: 20.,
         ..default()
     };
 
+    let prev_block_ids = info_blocks.iter().collect::<Vec<_>>();
+
+    let mut curr_block_ids = vec![];
+    let curr_items = boards.boards.iter();
+
+    for (diff, boards) in curr_items {
+        for (index, _) in boards.iter().enumerate() {
+            curr_block_ids.push(BoardId::new(*diff, index));
+        }
+    }
+
+    curr_block_ids.sort_by_key(|x| x.difficulty);
+
+    for (entity, prev, _) in prev_block_ids.iter() {
+        if !curr_block_ids.contains(prev) {
+            commands.entity(*entity).despawn();
+        }
+    }
+
     let mut latest_y = 286. + 55.;
 
-    let mut items = boards.boards.iter().collect::<Vec<_>>();
-    items.sort_by_key(|x| x.0);
+    for curr in curr_block_ids {
+        let selected = active_board
+            .active_board()
+            .is_some_and(|active_board| active_board == &curr);
+        let finished = boards_state
+            .get(&curr)
+            .is_some_and(|f| f.is_finished_verified());
+        let visual_info = active_board
+            .boards_mapping
+            .iter()
+            .find(|(_, v)| v == &&curr)
+            .and_then(|(e, _)| visuals.get(*e).ok());
 
-    for (diff, boards) in items {
-        for (index, _) in boards.iter().enumerate() {
-            let id = BoardId::new(*diff, index);
-            let selected = active_board
-                .active_board()
-                .is_some_and(|active_board| active_board == &id);
-            let finished = boards_state
-                .get(&id)
-                .is_some_and(|f| f.is_finished_verified());
-            let visual_info = active_board
-                .boards_mapping
-                .iter()
-                .find(|(_, v)| v == &&id)
-                .and_then(|(e, _)| visuals.get(*e).ok());
+        latest_y -= 55.;
 
-            latest_y -= 55.;
+        let prev = prev_block_ids.iter().find(|(_, x, _)| x.0 == curr);
+        if let Some((entity, _, children)) = prev {
+            // Old persisting block (we may update it's location)
+
+            for child in children.iter() {
+                if let Ok(mut material) = material_query.get_mut(child) {
+                    material.0 = if selected {
+                        defaults.selected_resolving_block_color.clone()
+                    } else if finished {
+                        defaults.default_solved_block_color.clone()
+                    } else {
+                        defaults.default_block_color.clone()
+                    };
+                }
+
+                if let Ok(mut text) = visual_text.get_mut(child) {
+                    if let Some(visual_info) = visual_info {
+                        text.0 = visual_info.name.to_string();
+                    } else {
+                        text.0 = String::new()
+                    }
+                }
+            }
+
+            commands.entity(*entity).move_to(
+                Vec3::default().with_xy(vec2(-420., latest_y)),
+                Duration::from_secs(1),
+                EaseFunction::QuadraticInOut,
+            );
+        } else {
+            // a new block
             let mut spawned = commands.spawn((
                 Mesh2d(meshes.add(Rectangle::new(180., 50.))),
                 MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-                Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y))),
+                Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y)))
+                    .with_scale(Vec3::splat(0.)),
                 Pickable::default(),
-                BoardInfoBlock(BoardId::new(*diff, index)),
+                BoardInfoBlock(curr),
             ));
 
             spawned
@@ -814,8 +857,8 @@ fn update_boards_list(
                             builder.spawn((
                                 Text2d::new(format!(
                                     "#{} {}",
-                                    index + 1,
-                                    match diff {
+                                    curr.index + 1,
+                                    match curr.difficulty {
                                         Some(diff) => diff.to_string(),
                                         None => "Unspecified".to_string(),
                                     },
@@ -828,80 +871,105 @@ fn update_boards_list(
                         });
                 });
 
-            if let Some(visual_info) = visual_info {
-                spawned.with_child((
-                    TextBundle::new(
-                        visual_info.name.to_string(),
-                        font.font.clone(),
-                        17.,
-                        WHITE,
-                        Transform::default().with_translation(Vec3::default().with_x(-95.)),
-                    ),
-                    Anchor::CENTER_RIGHT,
-                ));
-            }
+            spawned.with_child((
+                TextBundle::new(
+                    if let Some(visual_info) = visual_info {
+                        visual_info.name.to_string()
+                    } else {
+                        String::new()
+                    },
+                    font.font.clone(),
+                    17.,
+                    WHITE,
+                    Transform::default().with_translation(Vec3::default().with_x(-95.)),
+                ),
+                Anchor::CENTER_RIGHT,
+                BoardInfoBlockVisualText,
+            ));
+
+            spawned.scale_to(
+                Vec3::splat(1.),
+                Duration::from_secs(1),
+                EaseFunction::QuadraticInOut,
+            );
         }
     }
 
-    font.font_size = 40.;
-    commands
-        .spawn((
-            Mesh2d(meshes.add(Rectangle::new(50., 50.))),
-            MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-            Transform::from_translation(Vec3::default().with_xy(vec2(-367., latest_y - 55.))),
-            Pickable::default(),
-            RequestNewBoardBlock,
-        ))
-        .observe(request_new_board)
-        .observe(request_new_board_over)
-        .observe(on_pointer_out)
-        .with_children(|builder| {
-            builder
-                .spawn((
-                    Mesh2d(meshes.add(Rectangle::new(45., 45.))),
-                    MeshMaterial2d(defaults.default_block_color.clone()),
-                    Transform::from_translation(Vec3::Z),
-                ))
-                .with_children(|builder| {
-                    builder.spawn((
-                        Text2d::new("+".to_string()),
-                        font.clone(),
-                        TextColor(defaults.default_base_text_color),
-                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
+    if let Ok(rnb) = rnb_block.single() {
+        commands.entity(rnb).move_to(
+            Vec3::default().with_xy(vec2(-367., latest_y - 55.)),
+            Duration::from_secs(1),
+            EaseFunction::QuadraticInOut,
+        );
+    } else {
+        font.font_size = 40.;
+        commands
+            .spawn((
+                Mesh2d(meshes.add(Rectangle::new(50., 50.))),
+                MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                Transform::from_translation(Vec3::default().with_xy(vec2(-367., latest_y - 55.))),
+                Pickable::default(),
+                RequestNewBoardBlock,
+            ))
+            .observe(request_new_board)
+            .observe(request_new_board_over)
+            .observe(on_pointer_out)
+            .with_children(|builder| {
+                builder
+                    .spawn((
+                        Mesh2d(meshes.add(Rectangle::new(45., 45.))),
+                        MeshMaterial2d(defaults.default_block_color.clone()),
                         Transform::from_translation(Vec3::Z),
-                    ));
-                });
-        });
+                    ))
+                    .with_children(|builder| {
+                        builder.spawn((
+                            Text2d::new("+".to_string()),
+                            font.clone(),
+                            TextColor(defaults.default_base_text_color),
+                            TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                            Transform::from_translation(Vec3::Z),
+                        ));
+                    });
+            });
+    }
 
-    font.font_size = 20.;
-    commands
-        .spawn((
-            Mesh2d(meshes.add(Rectangle::new(100., 50.))),
-            MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-            Transform::from_translation(Vec3::default().with_xy(vec2(-447., latest_y - 55.))),
-            Pickable::default(),
-            RequestNewBoardVisual,
-        ))
-        .observe(request_new_board_visual)
-        .observe(request_new_board_visual_over)
-        .observe(on_pointer_out)
-        .with_children(|builder| {
-            builder
-                .spawn((
-                    Mesh2d(meshes.add(Rectangle::new(95., 45.))),
-                    MeshMaterial2d(defaults.default_block_color.clone()),
-                    Transform::from_translation(Vec3::Z),
-                ))
-                .with_children(|builder| {
-                    builder.spawn((
-                        Text2d::new("New city".to_string()),
-                        font,
-                        TextColor(defaults.default_base_text_color),
-                        TextLayout::new(Justify::Center, LineBreak::NoWrap),
+    if let Ok(rnbv) = rnbv_block.single() {
+        commands.entity(rnbv).move_to(
+            Vec3::default().with_xy(vec2(-447., latest_y - 55.)),
+            Duration::from_secs(1),
+            EaseFunction::QuadraticInOut,
+        );
+    } else {
+        font.font_size = 20.;
+        commands
+            .spawn((
+                Mesh2d(meshes.add(Rectangle::new(100., 50.))),
+                MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                Transform::from_translation(Vec3::default().with_xy(vec2(-447., latest_y - 55.))),
+                Pickable::default(),
+                RequestNewBoardVisual,
+            ))
+            .observe(request_new_board_visual)
+            .observe(request_new_board_visual_over)
+            .observe(on_pointer_out)
+            .with_children(|builder| {
+                builder
+                    .spawn((
+                        Mesh2d(meshes.add(Rectangle::new(95., 45.))),
+                        MeshMaterial2d(defaults.default_block_color.clone()),
                         Transform::from_translation(Vec3::Z),
-                    ));
-                });
-        });
+                    ))
+                    .with_children(|builder| {
+                        builder.spawn((
+                            Text2d::new("New city".to_string()),
+                            font,
+                            TextColor(defaults.default_base_text_color),
+                            TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                            Transform::from_translation(Vec3::Z),
+                        ));
+                    });
+            });
+    }
 }
 
 #[derive(Debug, Component)]
@@ -910,7 +978,7 @@ struct RequestNewBoardVisual;
 const AVAILABLE_BOARD_POSITIONS: [Vec2; 5] = [
     vec2(0., 50.),
     vec2(650., -600.),
-    vec2(-650., -350.),
+    vec2(-650., -400.),
     vec2(845., 70.),
     vec2(0., -740.),
 ];
@@ -1800,11 +1868,13 @@ fn spawn_sudoku_board_visual(
     let mut spawned = commands.spawn((
         Mesh2d(meshes.add(Rectangle::new(width, width + top_padding))),
         MeshMaterial2d(defaults.default_deactivate_board_color.clone()),
-        Transform::default().with_translation(Vec3 {
-            x: center.x,
-            y: center.y,
-            ..Default::default()
-        }),
+        Transform::default()
+            .with_translation(Vec3 {
+                x: center.x,
+                y: center.y,
+                ..Default::default()
+            })
+            .with_scale(Vec3::splat(0.)),
         SudokuBoardVisual { name: name.clone() },
         Pickable::default(),
     ));
@@ -1891,6 +1961,11 @@ fn spawn_sudoku_board_visual(
     });
 
     spawned.insert(BlocksAccessInfo::new(access_infos));
+    spawned.scale_to(
+        Vec3::splat(1.),
+        Duration::from_secs(1),
+        EaseFunction::QuadraticInOut,
+    );
 }
 
 #[derive(Debug, Component)]
