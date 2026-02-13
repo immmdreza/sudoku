@@ -12,10 +12,12 @@ use bevy::{
     log::{self},
     prelude::*,
     sprite::Anchor,
-    tasks::futures_lite::StreamExt,
     text::TextBounds,
 };
-use bevy_tweening::{AnimCompletedEvent, EntityCommandsTweeningExtensions, Tween, TweeningPlugin};
+use bevy_tweening::{
+    AnimCompletedEvent, EntityCommandsTweeningExtensions, Tween, TweenAnim, TweeningPlugin,
+    lens::TransformScaleLens,
+};
 use sudoku_bevy::{
     BlocksAccessInfo, SquareIndex, gen_random_city_name,
     plugins::{
@@ -309,6 +311,7 @@ fn main() {
             OnEnter(AppState::Ready),
             (setup_game, check_foundation_squares, check_block_squares).chain(),
         )
+        // .add_systems(Update, )
         .add_systems(
             PostUpdate,
             (
@@ -637,22 +640,30 @@ fn setup_game(
         Transform::from_translation(Vec3::default().with_xy(vec2(-420., 330.))),
     ));
 
-    commands.spawn((
-        TextBundle::new(
-            "Heresy,",
-            defaults_assets.default_font.clone(),
-            100.,
-            RED,
-            Transform::default().with_translation(Vec3::default().with_y(120.).with_z(-5.)),
-        ),
-        children![TextBundle::new(
-            "You say?",
-            defaults_assets.default_font.clone(),
-            83.,
-            WHITE,
-            Transform::default().with_translation(Vec3::default().with_y(-80.)),
-        )],
-    ));
+    commands
+        .spawn((
+            TextBundle::new(
+                "Heresy,",
+                defaults_assets.default_font.clone(),
+                100.,
+                RED,
+                Transform::default()
+                    .with_translation(Vec3::default().with_y(120.).with_z(-5.))
+                    .with_scale(Vec3::splat(0.)),
+            ),
+            children![TextBundle::new(
+                "You say?",
+                defaults_assets.default_font.clone(),
+                83.,
+                WHITE,
+                Transform::default().with_translation(Vec3::default().with_y(-80.)),
+            )],
+        ))
+        .scale_to(
+            Vec3::splat(1.),
+            Duration::from_secs(2),
+            EaseFunction::QuadraticInOut,
+        );
 
     commands.trigger(UpdateBoardList);
 }
@@ -664,7 +675,7 @@ fn relocate_camera(
     camera: Query<Entity, (With<Camera>, Without<SudokuBoardVisual>)>,
 ) {
     if mouse_input.just_pressed(MouseButton::Right) {
-        if (mouse_world_position.0.x.abs() < 500.) && (mouse_world_position.0.y.abs() < 500.) {
+        if (mouse_world_position.0.x.abs() < 1000.) && (mouse_world_position.0.y.abs() < 1000.) {
             if let Ok(camera_entity) = camera.single() {
                 commands.entity(camera_entity).move_to(
                     Vec3 {
@@ -1152,7 +1163,6 @@ enum ShouldUpdateEvent {
     Remove(BlockIndex),
 }
 
-//TODO - Update later to reflect many `SudokuBoardMarker`s.
 #[derive(Debug, Resource, Deref, DerefMut, Default)]
 struct ShouldUpdateAnyway(Vec<BlockIndex>);
 
@@ -1421,44 +1431,6 @@ fn final_verification(
         }
     }
 }
-
-//TODO -
-// let index = index.actual_index();
-// let index = BlockIndex::from_index(index.1, index.0).unwrap();
-// let block = board.get_block(&index);
-
-// let text = format!(
-//     "This is block {:?}. {}",
-//     (index.actual_indexes()),
-//     match &block.status {
-//         SudokuBlockStatus::Unresolved => format!(
-//             "This block is empty, Use number to resolve or put a possibility onto it"
-//         ),
-//         SudokuBlockStatus::Fixed(sudoku_number) => format!(
-//             "This is a fixed block with number {}. This means you can't mess around with this one.",
-//             sudoku_number.to_u8()
-//         ),
-//         SudokuBlockStatus::Resolved(sudoku_number) => format!(
-//             "The number {} is placed here. {}",
-//             sudoku_number.to_u8(),
-//             match &block.conflicting {
-//                 Some(conflicting) => match conflicting {
-//                     Conflicting::AffectedBy(_) => format!(""),
-//                     Conflicting::AffectedByPossibilities {
-//                         block_index: _,
-//                         number: _,
-//                     } => format!(""),
-//                     Conflicting::Source =>
-//                         format!("But this number you out in here caused conflicting."),
-//                 },
-//                 None =>
-//                     format!("The number is currently ok, but you can always change it."),
-//             }
-//         ),
-//         SudokuBlockStatus::Possibilities(_) =>
-//             format!("This is block of possibilities. (Quantum block!)"),
-//     }
-// );
 
 #[derive(Debug, Component)]
 struct Foundation;
@@ -1961,15 +1933,24 @@ fn spawn_sudoku_board_visual(
     });
 
     spawned.insert(BlocksAccessInfo::new(access_infos));
-    spawned.scale_to(
-        Vec3::splat(1.),
-        Duration::from_secs(1),
+
+    let tween = Tween::new(
         EaseFunction::QuadraticInOut,
+        Duration::from_secs(1),
+        TransformScaleLens {
+            start: Vec3::splat(0.),
+            end: Vec3::splat(1.),
+        },
     );
+
+    spawned.insert(TweenAnim::new(tween));
 }
 
 #[derive(Debug, Component)]
 struct DeleteBoardVisual(Entity);
+
+#[derive(Debug, Component)]
+struct Destroying;
 
 fn delete_board_visual(
     ev: On<Pointer<Click>>,
@@ -1981,7 +1962,29 @@ fn delete_board_visual(
     mut active_board_changed: ResMut<ActiveBoardChanged>,
 ) {
     if let Ok(delete_btn) = delete_btns.get(ev.entity) {
-        commands.entity(delete_btn.0).despawn();
+        commands
+            .entity(delete_btn.0)
+            .observe(
+                |ev: On<AnimCompletedEvent>,
+                 mut commands: Commands,
+                 destroying: Query<&Destroying>| {
+                    if destroying.get(ev.anim_entity).is_ok() {
+                        commands.entity(ev.anim_entity).despawn();
+                        println!("Despawn.");
+                    }
+                },
+            )
+            .insert((
+                Destroying,
+                TweenAnim::new(Tween::new(
+                    EaseFunction::QuadraticInOut,
+                    Duration::from_secs(1),
+                    TransformScaleLens {
+                        start: Vec3::splat(1.),
+                        end: Vec3::splat(0.),
+                    },
+                )),
+            ));
 
         active_board_mapping.0.remove(&delete_btn.0);
 

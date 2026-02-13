@@ -9,7 +9,7 @@ use bevy::{
     prelude::*,
     window::{EnabledButtons, WindowTheme},
 };
-use bevy_pancam::{PanCam, PanCamPlugin};
+use bevy_pancam::{DirectionKeys, PanCam, PanCamPlugin};
 use sudoku_solver::strategies::Strategy;
 
 use crate::plugins::shared::{AppState, TextBundle};
@@ -194,6 +194,7 @@ fn setup_asset_loading(
         MeshPickingCamera,
         Projection::Orthographic(ortho),
         PanCam {
+            move_keys: DirectionKeys::wasd(),
             min_scale: 1., // prevent the camera from zooming too far in
             max_scale: 5., // prevent the camera from zooming too far out
             min_x: -2000., // minimum x position of the camera window
