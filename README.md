@@ -1,4 +1,9 @@
-# Sudoku
+<div style="text-align:center">
+<h1>Sudoku</h1>
+<i>A simple sudoku game written in rust using Bevy game engine.</i>
+
+![alt text](assets/screenshot.jpg)
+</div>
 
 This a sudoku game written using bevy engine on rust; Only for "filling time" purposes.
 
