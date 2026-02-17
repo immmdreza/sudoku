@@ -1,6 +1,5 @@
 use bevy::{
     asset::LoadState,
-    camera_controller::pan_camera::{PanCamera, PanCameraPlugin},
     color::palettes::{
         basic::PURPLE,
         css::{BLACK, BLUE, RED, WHITE, YELLOW},
@@ -10,6 +9,7 @@ use bevy::{
     prelude::*,
     window::{EnabledButtons, WindowTheme},
 };
+use bevy_pancam::{DirectionKeys, PanCam, PanCamPlugin};
 use sudoku_solver::strategies::Strategy;
 
 use crate::plugins::shared::{AppState, TextBundle};
@@ -67,10 +67,13 @@ impl BlockColorInfo {
 #[derive(Debug, Resource, Default, Deref, DerefMut)]
 pub struct StrategyMarkerColors(pub HashMap<Strategy, BlockColorInfo>);
 
-/// This actually takes care of adding default plugins.
-pub struct LoadingPlugin;
+#[derive(Debug, Resource, Deref, DerefMut, Default)]
+pub struct MouseWorldPosition(pub Vec2);
 
-impl Plugin for LoadingPlugin {
+/// This actually takes care of adding default plugins.
+pub struct SetupPlugin;
+
+impl Plugin for SetupPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((
             DefaultPlugins.set(WindowPlugin {
@@ -95,12 +98,17 @@ impl Plugin for LoadingPlugin {
             //     ..Default::default()
             // }),
             MeshPickingPlugin,
-            PanCameraPlugin,
+            PanCamPlugin,
         ))
+        // // Changes update mode to reactive as it should be.
+        // // This will greatly reduce CPU usage.
+        // // But this mess up with pan camera
+        // .insert_resource(WinitSettings::desktop_app())
         .insert_resource(MeshPickingSettings {
             require_markers: true,
             ..Default::default()
         })
+        .init_resource::<MouseWorldPosition>()
         .init_resource::<DefaultAssets>()
         .init_resource::<DefaultMaterials>()
         .init_resource::<StrategyMarkerColors>()
@@ -110,7 +118,29 @@ impl Plugin for LoadingPlugin {
         .add_systems(
             Update,
             check_assets_ready.run_if(in_state(AppState::Loading)),
+        )
+        .add_systems(
+            PreUpdate,
+            track_mouse_position.run_if(in_state(AppState::Ready)),
         );
+    }
+}
+
+fn track_mouse_position(
+    mut mouse_world_position: ResMut<MouseWorldPosition>,
+    camera_query: Single<(&Camera, &GlobalTransform)>,
+    window: Single<&Window>,
+) {
+    let (camera, camera_transform) = *camera_query;
+
+    if let Some(cursor_position) = window.cursor_position()
+        // Calculate a world position based on the cursor's position.
+        && let Ok(world_pos) = camera.viewport_to_world_2d(camera_transform, cursor_position)
+        // To test Camera::world_to_viewport, convert result back to viewport space and then back to world space.
+        && let Ok(viewport_check) = camera.world_to_viewport(camera_transform, world_pos.extend(0.0))
+        && let Ok(_) = camera.viewport_to_world_2d(camera_transform, viewport_check.xy())
+    {
+        mouse_world_position.0 = world_pos;
     }
 }
 
@@ -163,24 +193,16 @@ fn setup_asset_loading(
         Camera2d,
         MeshPickingCamera,
         Projection::Orthographic(ortho),
-        PanCamera::default(),
-        // PanCam {
-        //     grab_buttons: vec![MouseButton::Left], // which buttons should drag the camera
-        //     move_keys: DirectionKeys {
-        //         // the keyboard buttons used to move the camera
-        //         up: vec![KeyCode::KeyW], // initalize the struct like this or use the provided methods for
-        //         down: vec![KeyCode::KeyS], // common key combinations
-        //         left: vec![KeyCode::KeyA],
-        //         right: vec![KeyCode::KeyD],
-        //     },
-        //     min_scale: 1., // prevent the camera from zooming too far in
-        //     max_scale: 5., // prevent the camera from zooming too far out
-        //     min_x: -1500., // minimum x position of the camera window
-        //     max_x: 1500.,  // maximum x position of the camera window
-        //     min_y: -1500., // minimum y position of the camera window
-        //     max_y: 1500.,  // maximum y position of the camera window
-        //     ..Default::default()
-        // },
+        PanCam {
+            move_keys: DirectionKeys::wasd(),
+            min_scale: 1., // prevent the camera from zooming too far in
+            max_scale: 5., // prevent the camera from zooming too far out
+            min_x: -2000., // minimum x position of the camera window
+            max_x: 2000.,  // maximum x position of the camera window
+            min_y: -2000., // minimum y position of the camera window
+            max_y: 2000.,  // maximum y position of the camera window
+            ..Default::default()
+        },
     ));
 
     commands.spawn((

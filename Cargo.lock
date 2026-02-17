@@ -527,23 +527,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_camera_controller"
-version = "0.18.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6bc6fe8a42ad770c56bbc94e5d96696069200cdfdb9e57cb6db3f480f92a4571"
-dependencies = [
- "bevy_app",
- "bevy_camera",
- "bevy_ecs",
- "bevy_input",
- "bevy_log",
- "bevy_math",
- "bevy_time",
- "bevy_transform",
- "bevy_window",
-]
-
-[[package]]
 name = "bevy_color"
 version = "0.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -851,7 +834,6 @@ dependencies = [
  "bevy_asset",
  "bevy_audio",
  "bevy_camera",
- "bevy_camera_controller",
  "bevy_color",
  "bevy_core_pipeline",
  "bevy_derive",
@@ -991,6 +973,15 @@ name = "bevy_mikktspace"
 version = "0.17.0-dev"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7ef8e4b7e61dfe7719bb03c884dc270cd46a82efb40f93e9933b990c5c190c59"
+
+[[package]]
+name = "bevy_pancam"
+version = "0.20.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2471bcedbc73d8fb715b454c80fb392eab6f4c0003a57260a5cbb3299da571de"
+dependencies = [
+ "bevy",
+]
 
 [[package]]
 name = "bevy_pbr"
@@ -1412,6 +1403,16 @@ dependencies = [
  "bevy_utils",
  "derive_more",
  "serde",
+ "thiserror 2.0.17",
+]
+
+[[package]]
+name = "bevy_tweening"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af8511c4208a4eb3fdec028088a2ff63f2a4ae4a7079eeb56a0cffae19fe064f"
+dependencies = [
+ "bevy",
  "thiserror 2.0.17",
 ]
 
@@ -4190,10 +4191,12 @@ checksum = "6637bab7722d379c8b41ba849228d680cc12d0a45ba1fa2b48f2a30577a06731"
 
 [[package]]
 name = "sudoku-bevy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "bevy",
  "bevy_dylib",
+ "bevy_pancam",
+ "bevy_tweening",
  "getrandom",
  "rand",
  "sudoku-samples",

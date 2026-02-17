@@ -1,4 +1,4 @@
-pub mod game_plugin;
+pub mod game;
 pub mod input_handling;
-pub mod loading_plugin;
+pub mod setup;
 pub mod shared;
