@@ -146,7 +146,7 @@ impl SelectedBlock {
     }
 }
 
-#[derive(Debug, Resource, Default)]
+#[derive(Debug, Default, Clone)]
 struct Stats {
     /// Mistakes while resolving a block number
     mistakes: u32,
@@ -154,9 +154,6 @@ struct Stats {
     /// Mistakes while marking a number as possible in a block
     possibility_mistakes: u32,
 }
-
-#[derive(Debug, Component)]
-struct MistakesCountText;
 
 #[derive(Debug, Component)]
 struct HelperBlock {
@@ -170,13 +167,13 @@ impl HelperBlock {
 }
 
 #[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
-enum BoardState {
+enum BoardPlayingState {
     #[default]
     Playing,
     FinishedVerified,
 }
 
-impl BoardState {
+impl BoardPlayingState {
     /// Returns `true` if the board state is [`Playing`].
     ///
     /// [`Playing`]: BoardState::Playing
@@ -193,6 +190,12 @@ impl BoardState {
     fn is_finished_verified(&self) -> bool {
         matches!(self, Self::FinishedVerified)
     }
+}
+
+#[derive(Debug, Default, Clone)]
+struct BoardState {
+    stats: Stats,
+    playing_state: BoardPlayingState,
 }
 
 #[derive(Debug, Resource, Default, Clone, Deref, DerefMut)]
@@ -286,10 +289,10 @@ fn main() {
         .init_resource::<SudokuBoardResources>()
         .init_resource::<SudokuBoardSnapshotResources>()
         .init_resource::<SelectedBlock>()
-        .init_resource::<Stats>()
         .init_resource::<EngagingStrategyMap>()
         .init_resource::<BoardsStateMap>()
         .init_resource::<ShouldUpdateAnyway>()
+        .init_resource::<StatsTextEntities>()
         .add_observer(update_boards_list)
         .add_observer(on_game_input)
         .add_observer(on_should_update_event)
@@ -332,7 +335,7 @@ fn main() {
                     final_verification.run_if(resource_changed::<SudokuBoardResources>),
                 )
                     .chain(),
-                update_mistakes_text.run_if(resource_changed::<Stats>),
+                update_mistakes_text.run_if(resource_changed::<BoardsStateMap>),
                 update_active_board_text.run_if(
                     resource_changed::<ActiveBoardsMapping>
                         .or(resource_changed::<ActiveBoardChanged>),
@@ -410,27 +413,7 @@ fn setup_game(
         defaults_assets.default_font.clone(),
         100.,
         WHITE,
-        Transform::from_translation(Vec3::default().with_y(460.)),
-    ));
-
-    commands.spawn((
-        TextBundle::new(
-            "Mistakes: ",
-            defaults_assets.default_font.clone(),
-            20.,
-            WHITE,
-            Transform::from_translation(Vec3::default().with_y(400.)),
-        ),
-        children![(
-            TextSpan::new("0 (Numbers) / 0 (Possibilities)"),
-            TextFont {
-                font: defaults_assets.default_font.clone(),
-                font_size: 20.,
-                ..default()
-            },
-            TextColor(Color::from(RED)),
-            MistakesCountText,
-        )],
+        Transform::from_translation(Vec3::default().with_y(440.)),
     ));
 
     commands.spawn((
@@ -636,19 +619,11 @@ fn setup_game(
             defaults_assets.default_font.clone(),
             20.,
             YELLOW,
-            Transform::from_translation(Vec3::default().with_x(90.).with_y(492.)),
+            Transform::from_translation(Vec3::default().with_x(90.).with_y(472.)),
             TextLayout::new(Justify::Left, LineBreak::NoWrap),
         ),
         Anchor::CENTER_LEFT,
         ActiveBoardText,
-    ));
-
-    commands.spawn(TextBundle::new(
-        "Available boards:",
-        defaults_assets.default_font.clone(),
-        20.,
-        YELLOW,
-        Transform::from_translation(Vec3::default().with_xy(vec2(-420., 330.))),
     ));
 
     commands
@@ -676,10 +651,16 @@ fn setup_game(
             EaseFunction::QuadraticInOut,
         );
 
-    commands.spawn((
-        BoardsInfoContainer,
-        Transform::from_xyz(-420., 286. + 55., 0.),
-    ));
+    commands
+        .spawn((BoardsInfoContainer, Transform::from_xyz(-455., 286., 0.)))
+        .with_child(TextBundle::new(
+            "Available boards:",
+            defaults_assets.default_font.clone(),
+            20.,
+            YELLOW,
+            Transform::from_translation(Vec3::default().with_y(40.)),
+        ));
+
     commands.trigger(UpdateBoardList);
 }
 
@@ -767,6 +748,15 @@ fn update_active_board_text(
 #[derive(Debug, Component, Deref, DerefMut)]
 struct InnerBlock(BoardId);
 
+#[derive(Debug)]
+struct StatsText {
+    mistakes: Entity,
+    possibilities_mistakes: Entity,
+}
+
+#[derive(Debug, Resource, Default)]
+struct StatsTextEntities(HashMap<BoardId, StatsText>);
+
 fn update_boards_list(
     _ev: On<UpdateBoardList>,
     mut commands: Commands,
@@ -783,6 +773,7 @@ fn update_boards_list(
     rnb_block: Query<Entity, With<RequestNewBoardBlock>>,
     rnbv_block: Query<Entity, With<RequestNewBoardVisual>>,
     visuals: Query<&SudokuBoardVisual>,
+    mut state_texts: ResMut<StatsTextEntities>,
 ) {
     let mut font = TextFont {
         font: defaults_assets.default_font.clone(),
@@ -805,11 +796,12 @@ fn update_boards_list(
 
     for (entity, prev, _) in prev_block_ids.iter() {
         if !curr_block_ids.contains(prev) {
+            state_texts.0.remove(&prev.0);
             commands.entity(*entity).destroy_with_anim();
         }
     }
 
-    let mut latest_y = 286. + 55.;
+    let mut latest_y = 55.;
 
     for curr in curr_block_ids {
         let selected = active_board
@@ -817,7 +809,7 @@ fn update_boards_list(
             .is_some_and(|active_board| active_board == &curr);
         let finished = boards_state
             .get(&curr)
-            .is_some_and(|f| f.is_finished_verified());
+            .is_some_and(|f| f.playing_state.is_finished_verified());
         let visual_info = active_board
             .boards_mapping
             .iter()
@@ -851,185 +843,246 @@ fn update_boards_list(
             }
 
             commands.entity(*entity).move_to(
-                Vec3::default().with_xy(vec2(-420., latest_y)),
+                Vec3::default().with_y(latest_y),
                 Duration::from_secs(1),
                 EaseFunction::QuadraticInOut,
             );
         } else {
             // a new block
-            let mut spawned = commands.spawn((
-                Mesh2d(meshes.add(Rectangle::new(180., 50.))),
-                MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-                Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y)))
-                    .with_scale(Vec3::splat(0.)),
-                BoardInfoBlock(curr),
-            ));
+            commands.entity(*container.0).with_children(|builder| {
+                let mut spawned = builder.spawn((
+                    Mesh2d(meshes.add(Rectangle::new(180., 50.))),
+                    MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                    Transform::from_translation(Vec3::default().with_y(latest_y))
+                        .with_scale(Vec3::splat(0.)),
+                    BoardInfoBlock(curr),
+                ));
 
-            spawned.with_children(|builder| {
-                builder
-                    .spawn((
-                        Mesh2d(meshes.add(Rectangle::new(170., 45.))),
-                        MeshMaterial2d(if selected {
-                            defaults.selected_resolving_block_color.clone()
-                        } else if finished {
-                            defaults.default_solved_block_color.clone()
-                        } else {
-                            defaults.default_block_color.clone()
-                        }),
-                        Transform::from_translation(Vec3::Z),
-                        Pickable {
-                            should_block_lower: true,
-                            ..Default::default()
-                        },
-                        InnerBlock(curr),
-                    ))
-                    .observe(board_info_block_clicked)
-                    .observe(board_info_block_over)
-                    .observe(on_pointer_out)
-                    .with_children(|builder| {
-                        builder.spawn((
-                            Text2d::new(format!(
-                                "#{} {}",
-                                curr.index + 1,
-                                match curr.difficulty {
-                                    Some(diff) => diff.to_string(),
-                                    None => "Unspecified".to_string(),
-                                },
-                            )),
-                            font.clone(),
-                            TextColor(defaults.default_base_text_color),
-                            TextLayout::new(Justify::Center, LineBreak::NoWrap),
-                            Transform::from_translation(Vec3::Z),
-                        ));
-                    });
-            });
-
-            if curr != BoardId::default() {
                 spawned.with_children(|builder| {
                     builder
                         .spawn((
-                            Mesh2d(meshes.add(Rectangle::new(30., 45.))),
-                            MeshMaterial2d(defaults.conflicting_affected_color.clone()),
-                            Transform::default()
-                                .with_translation(Vec3::default().with_x(-110.).with_z(1.)),
-                            children![TextBundle::new(
-                                "X",
-                                font.font.clone(),
-                                20.,
-                                WHITE,
-                                Transform::default(),
-                            )],
-                            BoardInfoBlockDelete(curr),
+                            Mesh2d(meshes.add(Rectangle::new(170., 45.))),
+                            MeshMaterial2d(if selected {
+                                defaults.selected_resolving_block_color.clone()
+                            } else if finished {
+                                defaults.default_solved_block_color.clone()
+                            } else {
+                                defaults.default_block_color.clone()
+                            }),
+                            Transform::from_translation(Vec3::Z),
                             Pickable {
                                 should_block_lower: true,
                                 ..Default::default()
                             },
+                            InnerBlock(curr),
                         ))
-                        .observe(board_info_block_del_clicked)
-                        .observe(board_info_block_del_over)
+                        .observe(board_info_block_clicked)
+                        .observe(board_info_block_over)
+                        .observe(on_pointer_out)
+                        .with_children(|builder| {
+                            builder.spawn((
+                                Text2d::new(format!(
+                                    "#{} {}",
+                                    curr.index + 1,
+                                    match curr.difficulty {
+                                        Some(diff) => diff.to_string(),
+                                        None => "Unspecified".to_string(),
+                                    },
+                                )),
+                                font.clone(),
+                                TextColor(defaults.default_base_text_color),
+                                TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                                Transform::from_translation(Vec3::Z),
+                            ));
+                        });
+                });
+
+                // Close btn expect for default board.
+                if curr != BoardId::default() {
+                    spawned.with_children(|builder| {
+                        builder
+                            .spawn((
+                                Mesh2d(meshes.add(Rectangle::new(30., 45.))),
+                                MeshMaterial2d(defaults.conflicting_affected_color.clone()),
+                                Transform::default()
+                                    .with_translation(Vec3::default().with_x(-110.).with_z(1.)),
+                                children![TextBundle::new(
+                                    "X",
+                                    font.font.clone(),
+                                    20.,
+                                    WHITE,
+                                    Transform::default(),
+                                )],
+                                BoardInfoBlockDelete(curr),
+                                Pickable {
+                                    should_block_lower: true,
+                                    ..Default::default()
+                                },
+                            ))
+                            .observe(board_info_block_del_clicked)
+                            .observe(board_info_block_del_over)
+                            .observe(on_pointer_out);
+                    });
+                }
+
+                // Stats for each board
+                spawned.with_children(|builder| {
+                    builder
+                        .spawn((
+                            Mesh2d(meshes.add(Rectangle::new(30., 45.))),
+                            MeshMaterial2d(defaults.default_active_board_color.clone()),
+                            Transform::default()
+                                .with_translation(Vec3::default().with_x(110.).with_z(1.)),
+                            Pickable::default(),
+                        ))
+                        .with_children(|builder| {
+                            let m = builder
+                                .spawn(TextBundle::new(
+                                    "0",
+                                    font.font.clone(),
+                                    25.,
+                                    WHITE,
+                                    Transform::from_xyz(-5., 11., 0.),
+                                ))
+                                .id();
+                            builder.spawn(TextBundle::new(
+                                "|",
+                                font.font.clone(),
+                                15.,
+                                WHITE,
+                                Transform::from_rotation(Quat::from_rotation_z(-45.)),
+                            ));
+                            let pm = builder
+                                .spawn(TextBundle::new(
+                                    "0",
+                                    font.font.clone(),
+                                    20.,
+                                    WHITE,
+                                    Transform::from_xyz(5., -10., 0.),
+                                ))
+                                .id();
+                            state_texts.0.insert(
+                                curr,
+                                StatsText {
+                                    mistakes: m,
+                                    possibilities_mistakes: pm,
+                                },
+                            );
+                        })
+                        .observe(on_board_stats_over)
                         .observe(on_pointer_out);
                 });
-            }
 
-            spawned.with_child((
-                TextBundle::new(
-                    if let Some(visual_info) = visual_info {
-                        visual_info.name.to_string()
-                    } else {
-                        String::new()
-                    },
-                    font.font.clone(),
-                    17.,
-                    WHITE,
-                    Transform::default().with_translation(Vec3::default().with_x(-135.)),
-                ),
-                Anchor::CENTER_RIGHT,
-                BoardInfoBlockVisualText,
-            ));
+                spawned.with_child((
+                    TextBundle::new(
+                        if let Some(visual_info) = visual_info {
+                            visual_info.name.to_string()
+                        } else {
+                            String::new()
+                        },
+                        font.font.clone(),
+                        17.,
+                        WHITE,
+                        Transform::default().with_translation(Vec3::default().with_x(-135.)),
+                    ),
+                    Anchor::CENTER_RIGHT,
+                    BoardInfoBlockVisualText,
+                ));
 
-            spawned.scale_to(
-                Vec3::splat(1.),
-                Duration::from_secs(1),
-                EaseFunction::QuadraticInOut,
-            );
+                spawned.scale_to(
+                    Vec3::splat(1.),
+                    Duration::from_secs(1),
+                    EaseFunction::QuadraticInOut,
+                );
+            });
         }
     }
 
     if let Ok(rnb) = rnb_block.single() {
         commands.entity(rnb).move_to(
-            Vec3::default().with_xy(vec2(-367., latest_y - 55.)),
+            Vec3::default().with_xy(vec2(53., latest_y - 55.)),
             Duration::from_secs(1),
             EaseFunction::QuadraticInOut,
         );
     } else {
         font.font_size = 40.;
-        commands
-            .spawn((
-                Mesh2d(meshes.add(Rectangle::new(50., 50.))),
-                MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-                Transform::from_translation(Vec3::default().with_xy(vec2(-367., latest_y - 55.))),
-                Pickable::default(),
-                RequestNewBoardBlock,
-            ))
-            .observe(request_new_board)
-            .observe(request_new_board_over)
-            .observe(on_pointer_out)
-            .with_children(|builder| {
-                builder
-                    .spawn((
-                        Mesh2d(meshes.add(Rectangle::new(45., 45.))),
-                        MeshMaterial2d(defaults.default_block_color.clone()),
-                        Transform::from_translation(Vec3::Z),
-                    ))
-                    .with_children(|builder| {
-                        builder.spawn((
-                            Text2d::new("+".to_string()),
-                            font.clone(),
-                            TextColor(defaults.default_base_text_color),
-                            TextLayout::new(Justify::Center, LineBreak::NoWrap),
+        commands.entity(*container.0).with_children(|builder| {
+            builder
+                .spawn((
+                    Mesh2d(meshes.add(Rectangle::new(50., 50.))),
+                    MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                    Transform::from_translation(Vec3::default().with_xy(vec2(53., latest_y - 55.))),
+                    Pickable::default(),
+                    RequestNewBoardBlock,
+                ))
+                .observe(request_new_board)
+                .observe(request_new_board_over)
+                .observe(on_pointer_out)
+                .with_children(|builder| {
+                    builder
+                        .spawn((
+                            Mesh2d(meshes.add(Rectangle::new(45., 45.))),
+                            MeshMaterial2d(defaults.default_block_color.clone()),
                             Transform::from_translation(Vec3::Z),
-                        ));
-                    });
-            });
+                        ))
+                        .with_children(|builder| {
+                            builder.spawn((
+                                Text2d::new("+".to_string()),
+                                font.clone(),
+                                TextColor(defaults.default_base_text_color),
+                                TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                                Transform::from_translation(Vec3::Z),
+                            ));
+                        });
+                });
+        });
     }
 
     if let Ok(rnbv) = rnbv_block.single() {
         commands.entity(rnbv).move_to(
-            Vec3::default().with_xy(vec2(-447., latest_y - 55.)),
+            Vec3::default().with_xy(vec2(-27., latest_y - 55.)),
             Duration::from_secs(1),
             EaseFunction::QuadraticInOut,
         );
     } else {
         font.font_size = 20.;
-        commands
-            .spawn((
-                Mesh2d(meshes.add(Rectangle::new(100., 50.))),
-                MeshMaterial2d(defaults.default_foundation_block_color.clone()),
-                Transform::from_translation(Vec3::default().with_xy(vec2(-447., latest_y - 55.))),
-                Pickable::default(),
-                RequestNewBoardVisual,
-            ))
-            .observe(request_new_board_visual)
-            .observe(request_new_board_visual_over)
-            .observe(on_pointer_out)
-            .with_children(|builder| {
-                builder
-                    .spawn((
-                        Mesh2d(meshes.add(Rectangle::new(95., 45.))),
-                        MeshMaterial2d(defaults.default_block_color.clone()),
-                        Transform::from_translation(Vec3::Z),
-                    ))
-                    .with_children(|builder| {
-                        builder.spawn((
-                            Text2d::new("New city".to_string()),
-                            font,
-                            TextColor(defaults.default_base_text_color),
-                            TextLayout::new(Justify::Center, LineBreak::NoWrap),
+        commands.entity(*container.0).with_children(|builder| {
+            builder
+                .spawn((
+                    Mesh2d(meshes.add(Rectangle::new(100., 50.))),
+                    MeshMaterial2d(defaults.default_foundation_block_color.clone()),
+                    Transform::from_translation(
+                        Vec3::default().with_xy(vec2(-27., latest_y - 55.)),
+                    ),
+                    Pickable::default(),
+                    RequestNewBoardVisual,
+                ))
+                .observe(request_new_board_visual)
+                .observe(request_new_board_visual_over)
+                .observe(on_pointer_out)
+                .with_children(|builder| {
+                    builder
+                        .spawn((
+                            Mesh2d(meshes.add(Rectangle::new(95., 45.))),
+                            MeshMaterial2d(defaults.default_block_color.clone()),
                             Transform::from_translation(Vec3::Z),
-                        ));
-                    });
-            });
+                        ))
+                        .with_children(|builder| {
+                            builder.spawn((
+                                Text2d::new("New city".to_string()),
+                                font,
+                                TextColor(defaults.default_base_text_color),
+                                TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                                Transform::from_translation(Vec3::Z),
+                            ));
+                        });
+                });
+        });
     }
+}
+
+fn on_board_stats_over(_ev: On<Pointer<Over>>, mut help_text: Single<&mut Text2d, With<HelpText>>) {
+    help_text.0 = format!("Shows the state for this board.");
 }
 
 #[derive(Debug, Component)]
@@ -1208,13 +1261,23 @@ fn check_block_squares(query: Query<(Entity, &SquareIndex), With<Block>>) {
 // }
 
 fn update_mistakes_text(
-    stats: Res<Stats>,
-    mut mistakes_text: Single<&mut TextSpan, With<MistakesCountText>>,
+    active_board: ActiveBoardProvider,
+    stats: Res<BoardsStateMap>,
+    state_texts: Res<StatsTextEntities>,
+    mut mistakes_text: Query<&mut Text2d>,
 ) {
-    mistakes_text.0 = format!(
-        "{} (Numbers) / {} (Possibilities)",
-        stats.mistakes, stats.possibility_mistakes
-    );
+    if let Some(active_board) = active_board.active_board()
+        && let Some(stats) = stats.boards.get(active_board).map(|f| &f.stats)
+        && let Some(texts) = state_texts.0.get(active_board)
+    {
+        if let Ok(mut t) = mistakes_text.get_mut(texts.mistakes) {
+            t.0 = stats.mistakes.to_string();
+        }
+
+        if let Ok(mut t) = mistakes_text.get_mut(texts.possibilities_mistakes) {
+            t.0 = stats.possibility_mistakes.to_string();
+        }
+    }
 }
 
 fn on_should_update_event(
@@ -1322,8 +1385,8 @@ fn update_board(
                 {
                     #[cfg(feature = "debug")]
                     println!("Board has state.");
-                    match (state, &block.status) {
-                        (BoardState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
+                    match (&state.playing_state, &block.status) {
+                        (BoardPlayingState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
                             material.0 = defaults.default_solved_block_color.clone();
                         }
                         (_, _) => {
@@ -1503,7 +1566,7 @@ fn final_verification(
     {
         if board.verify_board() {
             if let Some(state) = boards_state.boards.get_mut(active_board) {
-                *state = BoardState::FinishedVerified;
+                state.playing_state = BoardPlayingState::FinishedVerified;
             }
 
             help_text.0 =
@@ -1581,7 +1644,6 @@ fn on_game_input(
     active_board: ActiveBoardProvider,
     mut boards: ResMut<SudokuBoardResources>,
     mut boards_state: ResMut<BoardsStateMap>,
-    mut stats: ResMut<Stats>,
     mut selected: ResMut<SelectedBlock>,
     mut engaging: ResMut<EngagingStrategyMap>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
@@ -1597,7 +1659,10 @@ fn on_game_input(
 
     match input.event().command_type() {
         CommandType::Number(sudoku_number) => {
-            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+            if board_state
+                .as_ref()
+                .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
+            {
                 // Board in finished state do nothing.
                 return;
             }
@@ -1626,7 +1691,9 @@ fn on_game_input(
                                     .is_some_and(|f| matches!(f, Conflicting::Source))
                                 {
                                     // This is a mistake!
-                                    stats.mistakes += 1;
+                                    if let Some(state) = board_state {
+                                        state.stats.mistakes += 1;
+                                    }
                                     #[cfg(feature = "debug")]
                                     println!("This is a mistake!")
                                 }
@@ -1639,7 +1706,9 @@ fn on_game_input(
 
                                 if poss.is_conflicting(number) {
                                     // This is also a mistake
-                                    stats.possibility_mistakes += 1;
+                                    if let Some(state) = board_state {
+                                        state.stats.possibility_mistakes += 1;
+                                    }
                                     #[cfg(feature = "debug")]
                                     println!("This is also a mistake!")
                                 }
@@ -1650,7 +1719,9 @@ fn on_game_input(
             }
         }
         CommandType::CalculatePossibilities => {
-            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+            if board_state
+                .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
+            {
                 // Board in finished state do nothing.
                 return;
             }
@@ -1660,7 +1731,9 @@ fn on_game_input(
             board.update_possibilities();
         }
         CommandType::ResolveNakedSingles => {
-            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+            if board_state
+                .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
+            {
                 // Board in finished state do nothing.
                 return;
             }
@@ -1675,7 +1748,7 @@ fn on_game_input(
             board.reset();
 
             if let Some(state) = board_state {
-                *state = BoardState::Playing;
+                state.playing_state = BoardPlayingState::Playing;
             }
 
             help_text.0 = DEFAULT_HELP_TEXT.to_string();
@@ -1687,7 +1760,9 @@ fn on_game_input(
             };
         }
         CommandType::ClearBlock => {
-            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+            if board_state
+                .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
+            {
                 // Board in finished state do nothing.
                 return;
             }
@@ -1744,7 +1819,9 @@ fn on_game_input(
             ]));
         }
         CommandType::Strategy(strategy) => {
-            if board_state.is_some_and(|f| matches!(f, BoardState::FinishedVerified)) {
+            if board_state
+                .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
+            {
                 // Board in finished state do nothing.
                 return;
             }
