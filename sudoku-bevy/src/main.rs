@@ -15,11 +15,12 @@ use bevy::{
     text::TextBounds,
 };
 use bevy_tweening::{
-    AnimCompletedEvent, EntityCommandsTweeningExtensions, Tween, TweenAnim, TweeningPlugin,
-    lens::TransformScaleLens,
+    EntityCommandsTweeningExtensions, Tween, TweenAnim, TweeningPlugin, lens::TransformScaleLens,
 };
 use sudoku_bevy::{
-    BlocksAccessInfo, SquareIndex, gen_random_city_name,
+    BlocksAccessInfo, SquareIndex,
+    extensions::CustomEntityCommands,
+    gen_random_city_name,
     plugins::{
         input_handling::InputHandlingPlugin,
         setup::{
@@ -208,6 +209,9 @@ struct ActiveBoardText;
 #[derive(Debug, Component, Deref, DerefMut)]
 struct BoardInfoBlock(BoardId);
 
+#[derive(Debug, Component, Deref, DerefMut)]
+struct BoardInfoBlockDelete(BoardId);
+
 #[derive(Debug, Component)]
 struct BoardInfoBlockVisualText;
 
@@ -258,7 +262,11 @@ struct ActiveBoardProviderMut<'w> {
 
 #[allow(dead_code)]
 impl<'w> ActiveBoardProviderMut<'w> {
-    fn active_board(&mut self) -> Option<&mut BoardId> {
+    fn active_board(&self) -> Option<&BoardId> {
+        self.boards_mapping.0.get(&self.active_visual)
+    }
+
+    fn active_board_mut(&mut self) -> Option<&mut BoardId> {
         self.boards_mapping.0.get_mut(&self.active_visual)
     }
 
@@ -749,6 +757,9 @@ fn update_active_board_text(
     }
 }
 
+#[derive(Debug, Component, Deref, DerefMut)]
+struct InnerBlock(BoardId);
+
 fn update_boards_list(
     _ev: On<UpdateBoardList>,
     mut commands: Commands,
@@ -759,7 +770,7 @@ fn update_boards_list(
     boards: Res<SudokuBoardResources>,
     boards_state: Res<BoardsStateMap>,
     info_blocks: Query<(Entity, &BoardInfoBlock, &Children), With<BoardInfoBlock>>,
-    mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>>,
+    mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>, With<InnerBlock>>,
     mut visual_text: Query<&mut Text2d, With<BoardInfoBlockVisualText>>,
     rnb_block: Query<Entity, With<RequestNewBoardBlock>>,
     rnbv_block: Query<Entity, With<RequestNewBoardVisual>>,
@@ -786,7 +797,7 @@ fn update_boards_list(
 
     for (entity, prev, _) in prev_block_ids.iter() {
         if !curr_block_ids.contains(prev) {
-            commands.entity(*entity).despawn();
+            commands.entity(*entity).destroy_with_anim();
         }
     }
 
@@ -843,44 +854,74 @@ fn update_boards_list(
                 MeshMaterial2d(defaults.default_foundation_block_color.clone()),
                 Transform::from_translation(Vec3::default().with_xy(vec2(-420., latest_y)))
                     .with_scale(Vec3::splat(0.)),
-                Pickable::default(),
                 BoardInfoBlock(curr),
             ));
 
-            spawned
-                .observe(board_info_block_clicked)
-                .observe(board_info_block_over)
-                .observe(on_pointer_out)
-                .with_children(|builder| {
+            spawned.with_children(|builder| {
+                builder
+                    .spawn((
+                        Mesh2d(meshes.add(Rectangle::new(170., 45.))),
+                        MeshMaterial2d(if selected {
+                            defaults.selected_resolving_block_color.clone()
+                        } else if finished {
+                            defaults.default_solved_block_color.clone()
+                        } else {
+                            defaults.default_block_color.clone()
+                        }),
+                        Transform::from_translation(Vec3::Z),
+                        Pickable {
+                            should_block_lower: true,
+                            ..Default::default()
+                        },
+                        InnerBlock(curr),
+                    ))
+                    .observe(board_info_block_clicked)
+                    .observe(board_info_block_over)
+                    .observe(on_pointer_out)
+                    .with_children(|builder| {
+                        builder.spawn((
+                            Text2d::new(format!(
+                                "#{} {}",
+                                curr.index + 1,
+                                match curr.difficulty {
+                                    Some(diff) => diff.to_string(),
+                                    None => "Unspecified".to_string(),
+                                },
+                            )),
+                            font.clone(),
+                            TextColor(defaults.default_base_text_color),
+                            TextLayout::new(Justify::Center, LineBreak::NoWrap),
+                            Transform::from_translation(Vec3::Z),
+                        ));
+                    });
+            });
+
+            if curr != BoardId::default() {
+                spawned.with_children(|builder| {
                     builder
                         .spawn((
-                            Mesh2d(meshes.add(Rectangle::new(170., 45.))),
-                            MeshMaterial2d(if selected {
-                                defaults.selected_resolving_block_color.clone()
-                            } else if finished {
-                                defaults.default_solved_block_color.clone()
-                            } else {
-                                defaults.default_block_color.clone()
-                            }),
-                            Transform::from_translation(Vec3::Z),
+                            Mesh2d(meshes.add(Rectangle::new(30., 45.))),
+                            MeshMaterial2d(defaults.conflicting_affected_color.clone()),
+                            Transform::default()
+                                .with_translation(Vec3::default().with_x(-110.).with_z(1.)),
+                            children![TextBundle::new(
+                                "X",
+                                font.font.clone(),
+                                20.,
+                                WHITE,
+                                Transform::default(),
+                            )],
+                            BoardInfoBlockDelete(curr),
+                            Pickable {
+                                should_block_lower: true,
+                                ..Default::default()
+                            },
                         ))
-                        .with_children(|builder| {
-                            builder.spawn((
-                                Text2d::new(format!(
-                                    "#{} {}",
-                                    curr.index + 1,
-                                    match curr.difficulty {
-                                        Some(diff) => diff.to_string(),
-                                        None => "Unspecified".to_string(),
-                                    },
-                                )),
-                                font.clone(),
-                                TextColor(defaults.default_base_text_color),
-                                TextLayout::new(Justify::Center, LineBreak::NoWrap),
-                                Transform::from_translation(Vec3::Z),
-                            ));
-                        });
+                        .observe(board_info_block_del_clicked)
+                        .observe(board_info_block_del_over)
+                        .observe(on_pointer_out);
                 });
+            }
 
             spawned.with_child((
                 TextBundle::new(
@@ -892,7 +933,7 @@ fn update_boards_list(
                     font.font.clone(),
                     17.,
                     WHITE,
-                    Transform::default().with_translation(Vec3::default().with_x(-95.)),
+                    Transform::default().with_translation(Vec3::default().with_x(-135.)),
                 ),
                 Anchor::CENTER_RIGHT,
                 BoardInfoBlockVisualText,
@@ -1053,7 +1094,7 @@ fn board_info_block_clicked(
     mut commands: Commands,
     mut active_board: ActiveBoardProviderMut,
     mut active_board_changed: ResMut<ActiveBoardChanged>,
-    board_info_block: Query<&BoardInfoBlock>,
+    board_info_block: Query<&InnerBlock>,
 ) {
     if let Ok(block_info) = board_info_block.get(event.entity) {
         active_board.update_active_board(block_info.0);
@@ -1064,7 +1105,7 @@ fn board_info_block_clicked(
 
 fn board_info_block_over(
     event: On<Pointer<Over>>,
-    board_info_block: Query<&BoardInfoBlock>,
+    board_info_block: Query<&InnerBlock>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
     if let Ok(block_info) = board_info_block.get(event.entity) {
@@ -1077,6 +1118,48 @@ fn board_info_block_over(
             },
         );
     }
+}
+
+fn board_info_block_del_clicked(
+    event: On<Pointer<Click>>,
+    mut commands: Commands,
+    mut active_board: ActiveBoardProviderMut,
+    mut active_board_changed: ResMut<ActiveBoardChanged>,
+    mut boards: ResMut<SudokuBoardResources>,
+    mut boards_state: ResMut<BoardsStateMap>,
+    board_info_block_del: Query<&BoardInfoBlockDelete>,
+) {
+    if let Ok(block_info) = board_info_block_del.get(event.entity) {
+        if active_board
+            .active_board()
+            .is_some_and(|f| *f == block_info.0)
+        {
+            active_board.update_active_board(BoardId::default());
+            active_board_changed.0 = true;
+        }
+
+        if let Some((_, id)) = active_board
+            .boards_mapping
+            .iter_mut()
+            .find(|f| *f.1 == block_info.0)
+        {
+            *id = BoardId::default();
+        }
+
+        if let Some(list) = boards.boards.get_mut(&block_info.difficulty) {
+            list.remove(block_info.index);
+        }
+        boards_state.boards.remove(&block_info.0);
+
+        commands.trigger(UpdateBoardList);
+    }
+}
+
+fn board_info_block_del_over(
+    _event: On<Pointer<Over>>,
+    mut help_text: Single<&mut Text2d, With<HelpText>>,
+) {
+    help_text.0 = format!("Will delete this board");
 }
 
 fn request_new_board_over(
@@ -1848,7 +1931,6 @@ fn spawn_sudoku_board_visual(
             })
             .with_scale(Vec3::splat(0.)),
         SudokuBoardVisual { name: name.clone() },
-        Pickable::default(),
     ));
 
     let visual_id = spawned.id();
@@ -1912,7 +1994,10 @@ fn spawn_sudoku_board_visual(
                 Mesh2d(meshes.add(Rectangle::new(30., 30.))),
                 MeshMaterial2d(defaults.default_foundation_block_color.clone()),
                 Transform::from_translation(Vec3::default().with_xy(vec2(290., 320.))),
-                Pickable::default(),
+                Pickable {
+                    should_block_lower: true,
+                    ..Default::default()
+                },
                 DeleteBoardVisual(visual_id),
                 children![(
                     Mesh2d(meshes.add(Rectangle::new(25., 25.))),
@@ -1949,9 +2034,6 @@ fn spawn_sudoku_board_visual(
 #[derive(Debug, Component)]
 struct DeleteBoardVisual(Entity);
 
-#[derive(Debug, Component)]
-struct Destroying;
-
 fn delete_board_visual(
     ev: On<Pointer<Click>>,
     mut commands: Commands,
@@ -1962,30 +2044,7 @@ fn delete_board_visual(
     mut active_board_changed: ResMut<ActiveBoardChanged>,
 ) {
     if let Ok(delete_btn) = delete_btns.get(ev.entity) {
-        commands
-            .entity(delete_btn.0)
-            .observe(
-                |ev: On<AnimCompletedEvent>,
-                 mut commands: Commands,
-                 destroying: Query<&Destroying>| {
-                    if destroying.get(ev.anim_entity).is_ok() {
-                        commands.entity(ev.anim_entity).despawn();
-                        println!("Despawn.");
-                    }
-                },
-            )
-            .insert((
-                Destroying,
-                TweenAnim::new(Tween::new(
-                    EaseFunction::QuadraticInOut,
-                    Duration::from_secs(1),
-                    TransformScaleLens {
-                        start: Vec3::splat(1.),
-                        end: Vec3::splat(0.),
-                    },
-                )),
-            ));
-
+        commands.entity(delete_btn.0).destroy_with_anim();
         active_board_mapping.0.remove(&delete_btn.0);
 
         if let Some(mut active_visual) = active_visual

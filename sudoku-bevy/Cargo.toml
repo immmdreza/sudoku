@@ -4,9 +4,10 @@ version = "0.2.2"
 edition = "2024"
 
 [features]
-default = ["dynamic_linking"]
+default = ["dynamic_linking", "debug"]
 dynamic_linking = ["bevy/dynamic_linking", "bevy_dylib"]
 wasm = ["getrandom", "getrandom/wasm_js"]
+debug = ["bevy/debug"]
 
 [dependencies]
 rand = "*"
