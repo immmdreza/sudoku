@@ -359,6 +359,9 @@ const AVAILABLE_COMMANDS: [CommandType; 9] = [
     CommandType::ClearBlock,
 ];
 
+#[derive(Debug, Component)]
+struct BoardsInfoContainer;
+
 fn setup_game(
     mut commands: Commands,
     mut sudoku_boards: ResMut<SudokuBoardResources>,
@@ -673,6 +676,10 @@ fn setup_game(
             EaseFunction::QuadraticInOut,
         );
 
+    commands.spawn((
+        BoardsInfoContainer,
+        Transform::from_xyz(-420., 286. + 55., 0.),
+    ));
     commands.trigger(UpdateBoardList);
 }
 
@@ -708,7 +715,7 @@ fn active_board_visual_changed(
     >,
     camera: Query<Entity, (With<Camera>, Without<SudokuBoardVisual>)>,
 ) {
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "debug")]
     println!("Active  board changed.");
 
     for (entity, transform, mut material) in visuals.iter_mut() {
@@ -769,6 +776,7 @@ fn update_boards_list(
     defaults_assets: Res<DefaultAssets>,
     boards: Res<SudokuBoardResources>,
     boards_state: Res<BoardsStateMap>,
+    container: If<Single<Entity, With<BoardsInfoContainer>>>,
     info_blocks: Query<(Entity, &BoardInfoBlock, &Children), With<BoardInfoBlock>>,
     mut material_query: Query<&mut MeshMaterial2d<ColorMaterial>, With<InnerBlock>>,
     mut visual_text: Query<&mut Text2d, With<BoardInfoBlockVisualText>>,
@@ -1265,7 +1273,7 @@ fn update_board(
     should_updates: Res<ShouldUpdateAnyway>,
     selected: Res<SelectedBlock>,
 ) {
-    #[cfg(debug_assertions)]
+    #[cfg(feature = "debug")]
     println!("Board needs update!");
 
     let mut snapshot_should_update = false;
@@ -1296,7 +1304,7 @@ fn update_board(
             || active_board_changed.0
             || should_updates.contains(&block_index)
         {
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug")]
             println!("Block {:?} seems changed.", &block_index);
 
             snapshot_should_update = true;
@@ -1312,14 +1320,14 @@ fn update_board(
                 if let Some(state) = board_state
                     && selected.current != (i, j)
                 {
-                    #[cfg(debug_assertions)]
+                    #[cfg(feature = "debug")]
                     println!("Board has state.");
                     match (state, &block.status) {
                         (BoardState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
                             material.0 = defaults.default_solved_block_color.clone();
                         }
                         (_, _) => {
-                            #[cfg(debug_assertions)]
+                            #[cfg(feature = "debug")]
                             println!("Playing.");
                             material.0 = defaults.default_block_color.clone();
                         }
@@ -1459,7 +1467,7 @@ fn update_board(
                 }
             }
 
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug")]
             println!("Updated ({:?}, {:?})", row, col);
         }
     }
@@ -1506,10 +1514,10 @@ fn final_verification(
                     .collect(),
             ));
 
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug")]
             println!("Sudoku solved successfully!");
         } else {
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug")]
             println!("Sudoku has mistakes!");
         }
     }
@@ -1619,7 +1627,7 @@ fn on_game_input(
                                 {
                                     // This is a mistake!
                                     stats.mistakes += 1;
-                                    #[cfg(debug_assertions)]
+                                    #[cfg(feature = "debug")]
                                     println!("This is a mistake!")
                                 }
                             }
@@ -1632,7 +1640,7 @@ fn on_game_input(
                                 if poss.is_conflicting(number) {
                                     // This is also a mistake
                                     stats.possibility_mistakes += 1;
-                                    #[cfg(debug_assertions)]
+                                    #[cfg(feature = "debug")]
                                     println!("This is also a mistake!")
                                 }
                             }
@@ -1647,7 +1655,7 @@ fn on_game_input(
                 return;
             }
 
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug")]
             println!("Updating possibilities.");
             board.update_possibilities();
         }
@@ -1657,12 +1665,12 @@ fn on_game_input(
                 return;
             }
 
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug")]
             println!("Resolving satisfied blocks (Naked single).");
             board.resolve_satisfied_blocks();
         }
         CommandType::Reset => {
-            #[cfg(debug_assertions)]
+            #[cfg(feature = "debug")]
             println!("Resetting.");
             board.reset();
 
@@ -1767,12 +1775,12 @@ fn on_game_input(
 
             match strategy {
                 Strategy::HiddenSingle => {
-                    #[cfg(debug_assertions)]
+                    #[cfg(feature = "debug")]
                     println!("Engaging Hidden single Strategy.");
                     board.engage_strategy(HiddenSingleStrategy, show_only_effect);
                 }
                 Strategy::NakedPair => {
-                    #[cfg(debug_assertions)]
+                    #[cfg(feature = "debug")]
                     println!("Engaging Naked pair Strategy.");
                     board.engage_strategy(NakedPairStrategy, show_only_effect);
                 }
