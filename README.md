@@ -1,13 +1,10 @@
-<div style="text-align:center">
-<h1>Sudoku</h1>
-<i>A simple sudoku game written in rust using Bevy game engine.</i>
-
+# Sudoku
 ![alt text](assets/screenshot.jpg)
-</div>
 
-This a sudoku game written using bevy engine on rust; Only for "filling time" purposes.
+_This a sudoku game written using bevy engine on rust; Only for "filling time" purposes._
 
 ## Try out
+_⚠ Both web and exe releases are automatically generated using github actions._
 
 ### Web
 
