@@ -6,7 +6,13 @@ use bevy::{
 };
 use sudoku_solver::{numbers::SudokuNumber, strategies::Strategy};
 
-use crate::plugins::shared::{AppState, CommandType, Direction, GameInputs};
+use crate::{
+    commands::reset_board::ResetBoardCommand,
+    plugins::{
+        game_commands::GameCommandsExtensions,
+        shared::{AppState, CommandType, Direction, GameInputs},
+    },
+};
 
 #[derive(Resource)]
 struct ChangeSelectionTimer(Timer);
@@ -64,10 +70,8 @@ impl Plugin for InputHandlingPlugin {
     }
 }
 
-fn update_possibilities(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::Space) {
-        commands.trigger(GameInputs::new(CommandType::CalculatePossibilities));
-    }
+fn update_possibilities(mut commands: Commands) {
+    commands.trigger(GameInputs::new(CommandType::CalculatePossibilities));
 }
 
 fn engage_strategy(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
@@ -82,28 +86,20 @@ fn engage_strategy(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCo
     }
 }
 
-fn resolve_satisfied(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::Enter) {
-        commands.trigger(GameInputs::new(CommandType::ResolveNakedSingles));
-    }
+fn resolve_satisfied(mut commands: Commands) {
+    commands.trigger(GameInputs::new(CommandType::ResolveNakedSingles));
 }
 
-fn reset(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::KeyR) {
-        commands.trigger(GameInputs::new(CommandType::Reset));
-    }
+fn reset(mut commands: Commands) {
+    commands.run_game_command::<ResetBoardCommand>();
 }
 
-fn change_selection_mode(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::KeyM) {
-        commands.trigger(GameInputs::new(CommandType::ChangeSelectionMode));
-    }
+fn change_selection_mode(mut commands: Commands) {
+    commands.trigger(GameInputs::new(CommandType::ChangeSelectionMode));
 }
 
-fn manually_clear_block(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {
-    if keyboard_input.just_pressed(KeyCode::KeyC) {
-        commands.trigger(GameInputs::new(CommandType::ClearBlock));
-    }
+fn manually_clear_block(mut commands: Commands) {
+    commands.trigger(GameInputs::new(CommandType::ClearBlock));
 }
 
 fn digit_1_to_9_clicked(mut commands: Commands, keyboard_input: Res<ButtonInput<KeyCode>>) {

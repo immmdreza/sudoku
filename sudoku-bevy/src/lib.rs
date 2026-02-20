@@ -7,8 +7,10 @@ use bevy::{
 use rand::seq::IndexedRandom;
 use sudoku_solver::BlockIndex;
 
+pub mod commands;
 pub mod extensions;
 pub mod plugins;
+pub mod shared;
 
 #[derive(Debug, Component, Deref)]
 pub struct BlocksAccessInfo(HashMap<BlockIndex, Entity>);

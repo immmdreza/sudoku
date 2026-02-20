@@ -1,13 +1,13 @@
 #![allow(clippy::too_many_arguments)]
 
-use std::{collections::HashMap, fmt::Display, time::Duration};
+use std::{collections::HashMap, time::Duration};
 
 use bevy::{
     color::palettes::{
         css::{BLACK, RED, WHITE, YELLOW},
         tailwind::ORANGE_300,
     },
-    ecs::system::{SystemId, SystemParam},
+    ecs::system::SystemId,
     input::common_conditions::input_just_pressed,
     log::{self},
     prelude::*,
@@ -19,112 +19,24 @@ use bevy_tweening::{
 };
 use sudoku_bevy::{
     BlocksAccessInfo, SquareIndex,
+    commands::reset_board::ResetBoardCommand,
     extensions::CustomEntityCommands,
     gen_random_city_name,
     plugins::{
+        game_commands::{GameCommandsExtensions, GameCommandsPlugin},
         input_handling::InputHandlingPlugin,
         setup::{
             DefaultAssets, DefaultMaterials, MouseWorldPosition, SetupPlugin, StrategyMarkerColors,
         },
         shared::{AppState, CommandType, Direction, GameInputs, TextBundle},
     },
+    shared::{components::*, resources::*, *},
 };
 use sudoku_solver::{
     BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
     strategies::{Strategy, hidden_single::HiddenSingleStrategy, naked_pair::NakedPairStrategy},
 };
-
-#[allow(dead_code)]
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-enum SudokuBoardDifficulty {
-    Easy,
-    #[default]
-    Normal,
-    Hard,
-    Expert,
-}
-
-impl Display for SudokuBoardDifficulty {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            SudokuBoardDifficulty::Easy => write!(f, "Easy"),
-            SudokuBoardDifficulty::Normal => write!(f, "Normal"),
-            SudokuBoardDifficulty::Hard => write!(f, "Hard"),
-            SudokuBoardDifficulty::Expert => write!(f, "Expert"),
-        }
-    }
-}
-
-#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash)]
-struct BoardId {
-    difficulty: Option<SudokuBoardDifficulty>,
-    index: usize,
-}
-
-impl From<(Option<SudokuBoardDifficulty>, usize)> for BoardId {
-    fn from((difficulty, index): (Option<SudokuBoardDifficulty>, usize)) -> Self {
-        Self::new(difficulty, index)
-    }
-}
-
-impl BoardId {
-    fn new(difficulty: Option<SudokuBoardDifficulty>, index: usize) -> Self {
-        Self { difficulty, index }
-    }
-}
-
-#[derive(Debug, Clone, Resource, Default, Deref, DerefMut)]
-struct ActiveBoardsMapping(HashMap<Entity, BoardId>);
-
-#[derive(Debug, Resource, Default, Deref, DerefMut)]
-struct ActiveBoardChanged(bool);
-
-#[derive(Debug, Resource, Default, PartialEq, Eq)]
-struct SudokuBoardResources {
-    boards: HashMap<Option<SudokuBoardDifficulty>, Vec<SudokuBoard>>,
-}
-
-impl SudokuBoardResources {
-    fn active_board(&self, active_board: &BoardId) -> &SudokuBoard {
-        self.boards
-            .get(&active_board.difficulty)
-            .unwrap()
-            .get(active_board.index)
-            .unwrap()
-    }
-
-    fn active_board_mut(&mut self, active_board: &BoardId) -> &mut SudokuBoard {
-        self.boards
-            .get_mut(&active_board.difficulty)
-            .unwrap()
-            .get_mut(active_board.index)
-            .unwrap()
-    }
-}
-
-#[derive(Debug, Resource, Default, PartialEq, Eq)]
-struct SudokuBoardSnapshotResources {
-    boards: HashMap<Option<SudokuBoardDifficulty>, Vec<SudokuBoard>>,
-}
-
-impl SudokuBoardSnapshotResources {
-    fn active_board(&self, active_board: &BoardId) -> &SudokuBoard {
-        self.boards
-            .get(&active_board.difficulty)
-            .unwrap()
-            .get(active_board.index)
-            .unwrap()
-    }
-
-    fn active_board_mut(&mut self, active_board: &BoardId) -> &mut SudokuBoard {
-        self.boards
-            .get_mut(&active_board.difficulty)
-            .unwrap()
-            .get_mut(active_board.index)
-            .unwrap()
-    }
-}
 
 #[derive(Debug, Default)]
 enum SelectionMode {
@@ -146,15 +58,6 @@ impl SelectedBlock {
     }
 }
 
-#[derive(Debug, Default, Clone)]
-struct Stats {
-    /// Mistakes while resolving a block number
-    mistakes: u32,
-
-    /// Mistakes while marking a number as possible in a block
-    possibility_mistakes: u32,
-}
-
 #[derive(Debug, Component)]
 struct HelperBlock {
     command_type: CommandType,
@@ -165,46 +68,6 @@ impl HelperBlock {
         Self { command_type }
     }
 }
-
-#[derive(Debug, Default, PartialEq, Eq, Hash, Clone)]
-enum BoardPlayingState {
-    #[default]
-    Playing,
-    FinishedVerified,
-}
-
-impl BoardPlayingState {
-    /// Returns `true` if the board state is [`Playing`].
-    ///
-    /// [`Playing`]: BoardState::Playing
-    #[allow(dead_code)]
-    #[must_use]
-    fn is_playing(&self) -> bool {
-        matches!(self, Self::Playing)
-    }
-
-    /// Returns `true` if the board state is [`FinishedVerified`].
-    ///
-    /// [`FinishedVerified`]: BoardState::FinishedVerified
-    #[must_use]
-    fn is_finished_verified(&self) -> bool {
-        matches!(self, Self::FinishedVerified)
-    }
-}
-
-#[derive(Debug, Default, Clone)]
-struct BoardState {
-    stats: Stats,
-    playing_state: BoardPlayingState,
-}
-
-#[derive(Debug, Resource, Default, Clone, Deref, DerefMut)]
-struct BoardsStateMap {
-    boards: HashMap<BoardId, BoardState>,
-}
-
-#[derive(Debug, Component)]
-struct HelpText;
 
 #[derive(Debug, Component)]
 struct ActiveBoardText;
@@ -220,8 +83,6 @@ struct BoardInfoBlockVisualText;
 
 #[derive(Debug, Component)]
 struct RequestNewBoardBlock;
-
-const DEFAULT_HELP_TEXT: &str = "Use 'Space' to update possible values, 'Enter' to resolve blocks, 'R' to reset, 'M' to change selection mode, 'C' to clear block, 1 to 9 to set number and 'H' to engage Hidden single strategy.";
 
 #[derive(Debug, Resource, Default)]
 struct EngagingStrategy {
@@ -242,48 +103,17 @@ struct SudokuBoardVisual {
     name: String,
 }
 
-#[derive(Debug, Resource, Deref, DerefMut)]
-struct ActiveBoardVisual(Entity);
-
-#[derive(Debug, SystemParam)]
-struct ActiveBoardProvider<'w> {
-    active_visual: If<Res<'w, ActiveBoardVisual>>,
-    boards_mapping: If<Res<'w, ActiveBoardsMapping>>,
-}
-
-impl<'w> ActiveBoardProvider<'w> {
-    fn active_board(&self) -> Option<&BoardId> {
-        self.boards_mapping.0.get(&self.active_visual)
-    }
-}
-
-#[derive(Debug, SystemParam)]
-struct ActiveBoardProviderMut<'w> {
-    active_visual: If<Res<'w, ActiveBoardVisual>>,
-    boards_mapping: If<ResMut<'w, ActiveBoardsMapping>>,
-}
-
-#[allow(dead_code)]
-impl<'w> ActiveBoardProviderMut<'w> {
-    fn active_board(&self) -> Option<&BoardId> {
-        self.boards_mapping.0.get(&self.active_visual)
-    }
-
-    fn active_board_mut(&mut self) -> Option<&mut BoardId> {
-        self.boards_mapping.0.get_mut(&self.active_visual)
-    }
-
-    fn update_active_board(&mut self, id: BoardId) -> Option<BoardId> {
-        self.boards_mapping.0.insert(***self.active_visual, id)
-    }
-}
-
 #[derive(Debug, Resource)]
 struct CreateBoardVisualSystemId(SystemId<In<Vec2>>);
 
 fn main() {
     App::new()
-        .add_plugins((SetupPlugin, InputHandlingPlugin, TweeningPlugin))
+        .add_plugins((
+            SetupPlugin,
+            InputHandlingPlugin,
+            TweeningPlugin,
+            GameCommandsPlugin,
+        ))
         .init_resource::<ActiveBoardsMapping>()
         .init_resource::<ActiveBoardChanged>()
         .init_resource::<SudokuBoardResources>()
@@ -377,6 +207,8 @@ fn setup_game(
 ) {
     log::warn!("Death is close.");
 
+    commands.register_game_command::<ResetBoardCommand>();
+
     let boards = [
         (None, vec![SudokuBoard::default()]),
         (
@@ -391,14 +223,10 @@ fn setup_game(
 
     for (k, v) in boards {
         let boards_count = v.len();
-        sudoku_boards.boards.insert(k, v);
-        sudoku_snapshots
-            .boards
-            .insert(k, (0..boards_count).map(|_| Default::default()).collect());
+        sudoku_boards.insert(k, v);
+        sudoku_snapshots.insert(k, (0..boards_count).map(|_| Default::default()).collect());
         (0..boards_count).for_each(|i| {
-            boards_state
-                .boards
-                .insert((k, i).into(), Default::default());
+            boards_state.insert((k, i).into(), Default::default());
         });
     }
 
@@ -784,7 +612,7 @@ fn update_boards_list(
     let prev_block_ids = info_blocks.iter().collect::<Vec<_>>();
 
     let mut curr_block_ids = vec![];
-    let curr_items = boards.boards.iter();
+    let curr_items = boards.iter();
 
     for (diff, boards) in curr_items {
         for (index, _) in boards.iter().enumerate() {
@@ -1130,7 +958,7 @@ fn request_new_board(
     mut active_board_changed: ResMut<ActiveBoardChanged>,
     mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
-    let default = boards.boards.entry(None).or_default();
+    let default = boards.entry(None).or_default();
 
     if default.len() >= 3 {
         help_text.0 = "Can't add more than 3.".to_string();
@@ -1138,11 +966,11 @@ fn request_new_board(
     }
 
     default.push(Default::default());
-    let default_snapshots = snapshots.boards.entry(None).or_default();
+    let default_snapshots = snapshots.entry(None).or_default();
     default_snapshots.push(Default::default());
 
     let id = BoardId::new(None, default.len() - 1);
-    boards_state.boards.insert(id, Default::default());
+    boards_state.insert(id, Default::default());
     active_board.update_active_board(id);
 
     active_board_changed.0 = true;
@@ -1207,10 +1035,10 @@ fn board_info_block_del_clicked(
             *id = BoardId::default();
         }
 
-        if let Some(list) = boards.boards.get_mut(&block_info.difficulty) {
+        if let Some(list) = boards.get_mut(&block_info.difficulty) {
             list.remove(block_info.index);
         }
-        boards_state.boards.remove(&block_info.0);
+        boards_state.remove(&block_info.0);
 
         commands.trigger(UpdateBoardList);
     }
@@ -1267,7 +1095,7 @@ fn update_mistakes_text(
     mut mistakes_text: Query<&mut Text2d>,
 ) {
     if let Some(active_board) = active_board.active_board()
-        && let Some(stats) = stats.boards.get(active_board).map(|f| &f.stats)
+        && let Some(stats) = stats.get(active_board).map(|f| &f.stats)
         && let Some(texts) = state_texts.0.get(active_board)
     {
         if let Ok(mut t) = mistakes_text.get_mut(texts.mistakes) {
@@ -1379,7 +1207,7 @@ fn update_board(
                 let (j, i) = block_index.actual_indexes();
 
                 // Update blocks based on finished or not
-                let board_state = boards_state.boards.get(active_board);
+                let board_state = boards_state.get(active_board);
                 if let Some(state) = board_state
                     && selected.current != (i, j)
                 {
@@ -1565,7 +1393,7 @@ fn final_verification(
         == 0
     {
         if board.verify_board() {
-            if let Some(state) = boards_state.boards.get_mut(active_board) {
+            if let Some(state) = boards_state.get_mut(active_board) {
                 state.playing_state = BoardPlayingState::FinishedVerified;
             }
 
@@ -1634,7 +1462,11 @@ fn on_helper_block_clicked(
     indexes: Query<&HelperBlock>,
 ) {
     if let Ok(block) = indexes.get(over.entity) {
-        commands.trigger(GameInputs::new(block.command_type));
+        if matches!(block.command_type, CommandType::Reset) {
+            commands.run_game_command::<ResetBoardCommand>();
+        } else {
+            commands.trigger(GameInputs::new(block.command_type));
+        }
     }
 }
 
@@ -1646,7 +1478,6 @@ fn on_game_input(
     mut boards_state: ResMut<BoardsStateMap>,
     mut selected: ResMut<SelectedBlock>,
     mut engaging: ResMut<EngagingStrategyMap>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
     let active_board = if let Some(active_board) = active_board.active_board() {
         active_board
@@ -1655,7 +1486,7 @@ fn on_game_input(
     };
 
     let board = boards.active_board_mut(active_board);
-    let board_state = boards_state.boards.get_mut(active_board);
+    let board_state = boards_state.get_mut(active_board);
 
     match input.event().command_type() {
         CommandType::Number(sudoku_number) => {
@@ -1742,18 +1573,7 @@ fn on_game_input(
             println!("Resolving satisfied blocks (Naked single).");
             board.resolve_satisfied_blocks();
         }
-        CommandType::Reset => {
-            #[cfg(feature = "debug")]
-            println!("Resetting.");
-            board.reset();
-
-            if let Some(state) = board_state {
-                state.stats = Default::default();
-                state.playing_state = BoardPlayingState::Playing;
-            }
-
-            help_text.0 = DEFAULT_HELP_TEXT.to_string();
-        }
+        CommandType::Reset => {}
         CommandType::ChangeSelectionMode => {
             selected.mode = match selected.mode {
                 SelectionMode::Resolving => SelectionMode::Possibilities,
@@ -2131,7 +1951,7 @@ fn delete_board_visual(
 ) {
     if let Ok(delete_btn) = delete_btns.get(ev.entity) {
         commands.entity(delete_btn.0).destroy_with_anim();
-        active_board_mapping.0.remove(&delete_btn.0);
+        active_board_mapping.remove(&delete_btn.0);
 
         if let Some(mut active_visual) = active_visual
             && active_visual.0 == delete_btn.0
