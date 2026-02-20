@@ -1748,6 +1748,7 @@ fn on_game_input(
             board.reset();
 
             if let Some(state) = board_state {
+                state.stats = Default::default();
                 state.playing_state = BoardPlayingState::Playing;
             }
 
