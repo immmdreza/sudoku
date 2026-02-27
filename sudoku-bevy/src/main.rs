@@ -1,6 +1,9 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::{collections::HashMap, time::Duration};
+use sudoku_bevy::plugins::game_commands::{
+    GameCommand, GameCommandsNoInputExtensions, GameCommandsRegisterExtensions,
+};
 
 use bevy::{
     color::palettes::{
@@ -20,6 +23,7 @@ use bevy_tweening::{
 use sudoku_bevy::{
     BlocksAccessInfo, SquareIndex,
     commands::reset_board::ResetBoardCommand,
+    create_game_command,
     extensions::CustomEntityCommands,
     gen_random_city_name,
     plugins::{
@@ -33,7 +37,8 @@ use sudoku_bevy::{
     shared::{components::*, resources::*, *},
 };
 use sudoku_solver::{
-    BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlockStatus, SudokuBoard,
+    BlockIndex, Conflicting, Possibilities as SudokuPossibilities, SudokuBlock, SudokuBlockStatus,
+    SudokuBoard,
     numbers::{SudokuNumber, SudokuNumbers},
     strategies::{Strategy, hidden_single::HiddenSingleStrategy, naked_pair::NakedPairStrategy},
 };
@@ -208,6 +213,9 @@ fn setup_game(
     log::warn!("Death is close.");
 
     commands.register_game_command::<ResetBoardCommand>();
+    commands.register_game_command::<EngageStrategy>();
+    commands.register_game_command::<ChangeDirection>();
+    commands.register_game_command::<ChangeSelectionMode>();
 
     let boards = [
         (None, vec![SudokuBoard::default()]),
@@ -1137,7 +1145,7 @@ fn on_should_update_event(
 }
 
 #[allow(dead_code)]
-#[derive(Debug, Event)]
+#[derive(Debug, Event, Message)]
 enum ShouldUpdateEvent {
     Clear,
     Add(BlockIndex),
@@ -1186,180 +1194,194 @@ fn update_board(
         return;
     };
 
-    for (row, col) in SudokuNumber::iter_numbers() {
-        let block_index = BlockIndex::new(row, col);
-        let block = boards.active_board(active_board).get_block(&block_index);
-        let snapshot_block = snapshots.active_board(active_board).get_block(&block_index);
+    let mut update_process = |block_index: &BlockIndex,
+                              block: &SudokuBlock,
+                              snapshot_block: &SudokuBlock| {
+        snapshot_should_update = true;
 
-        if (block != snapshot_block)
-            || active_board_changed.0
-            || should_updates.contains(&block_index)
+        let block_entity = board_visual.get(block_index);
+        if let Some((entity, spawn_info, mut material)) =
+            block_entity.and_then(|e| blocks.get_mut(*e).ok())
         {
-            #[cfg(feature = "debug")]
-            println!("Block {:?} seems changed.", &block_index);
+            let (j, i) = block_index.actual_indexes();
 
-            snapshot_should_update = true;
-
-            let block_entity = board_visual.get(&block_index);
-            if let Some((entity, spawn_info, mut material)) =
-                block_entity.and_then(|e| blocks.get_mut(*e).ok())
+            // Update blocks based on finished or not
+            let board_state = boards_state.get(active_board);
+            if let Some(state) = board_state
+                && selected.current != (i, j)
             {
-                let (j, i) = block_index.actual_indexes();
-
-                // Update blocks based on finished or not
-                let board_state = boards_state.get(active_board);
-                if let Some(state) = board_state
-                    && selected.current != (i, j)
-                {
-                    #[cfg(feature = "debug")]
-                    println!("Board has state.");
-                    match (&state.playing_state, &block.status) {
-                        (BoardPlayingState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
-                            material.0 = defaults.default_solved_block_color.clone();
-                        }
-                        (_, _) => {
-                            #[cfg(feature = "debug")]
-                            println!("Playing.");
-                            material.0 = defaults.default_block_color.clone();
-                        }
+                #[cfg(feature = "debug")]
+                println!("Board has state.");
+                match (&state.playing_state, &block.status) {
+                    (BoardPlayingState::FinishedVerified, SudokuBlockStatus::Resolved(_)) => {
+                        material.0 = defaults.default_solved_block_color.clone();
+                    }
+                    (_, _) => {
+                        #[cfg(feature = "debug")]
+                        println!("Playing.");
+                        material.0 = defaults.default_block_color.clone();
                     }
                 }
+            }
 
-                // Regular block update.
-                if block.status != snapshot_block.status || active_board_changed.0 {
-                    commands.entity(entity).despawn_children();
-                    match &block.status {
-                        SudokuBlockStatus::Unresolved => (),
-                        SudokuBlockStatus::Fixed(sudoku_number)
-                        | SudokuBlockStatus::Resolved(sudoku_number) => {
-                            text_font.font_size = spawn_info.width;
-                            commands.entity(entity).with_child((
-                                Text2d::new(format!("{}", sudoku_number.to_u8())),
-                                text_font.clone(),
-                                TextColor(
-                                    if matches!(&block.status, SudokuBlockStatus::Fixed(_)) {
-                                        defaults.default_fixed_number_color
-                                    } else {
-                                        defaults.default_resolved_number_color
-                                    },
-                                ),
-                                TextLayout::new_with_justify(text_justification),
-                            ));
-                        }
-                        SudokuBlockStatus::Possibilities(possibilities) => {
-                            commands.entity(entity).with_children(|builder| {
-                                let master_index = spawn_info.index;
-                                let width = spawn_info.width;
+            // Regular block update.
+            if block.status != snapshot_block.status || active_board_changed.0 {
+                commands.entity(entity).despawn_children();
+                match &block.status {
+                    SudokuBlockStatus::Unresolved => (),
+                    SudokuBlockStatus::Fixed(sudoku_number)
+                    | SudokuBlockStatus::Resolved(sudoku_number) => {
+                        text_font.font_size = spawn_info.width;
+                        commands.entity(entity).with_child((
+                            Text2d::new(format!("{}", sudoku_number.to_u8())),
+                            text_font.clone(),
+                            TextColor(if matches!(&block.status, SudokuBlockStatus::Fixed(_)) {
+                                defaults.default_fixed_number_color
+                            } else {
+                                defaults.default_resolved_number_color
+                            }),
+                            TextLayout::new_with_justify(text_justification),
+                        ));
+                    }
+                    SudokuBlockStatus::Possibilities(possibilities) => {
+                        commands.entity(entity).with_children(|builder| {
+                            let master_index = spawn_info.index;
+                            let width = spawn_info.width;
 
-                                let numbers = possibilities
-                                    .numbers
+                            let numbers = possibilities
+                                .numbers
+                                .iter()
+                                .map(|f| {
+                                    let indexed = f.to_index();
+                                    let i = (indexed) / 3;
+                                    let j = (indexed) % 3;
+                                    (f, indexed + 1, i, j)
+                                })
+                                .collect::<Vec<_>>();
+
+                            for spawn_info in square_group_info(width, 2., Default::default()) {
+                                if let Some((the_number, number, _, _)) = numbers
                                     .iter()
-                                    .map(|f| {
-                                        let indexed = f.to_index();
-                                        let i = (indexed) / 3;
-                                        let j = (indexed) % 3;
-                                        (f, indexed + 1, i, j)
-                                    })
-                                    .collect::<Vec<_>>();
+                                    .find(|(_, _, i, j)| spawn_info.index == (*j, *i))
+                                {
+                                    text_font.font_size = spawn_info.width;
 
-                                for spawn_info in square_group_info(width, 2., Default::default()) {
-                                    if let Some((the_number, number, _, _)) = numbers
-                                        .iter()
-                                        .find(|(_, _, i, j)| spawn_info.index == (*j, *i))
-                                    {
-                                        text_font.font_size = spawn_info.width;
-
-                                        builder.spawn((
-                                            SquareBundle::new(
-                                                if possibilities
-                                                    .is_conflicting((*number).try_into().unwrap())
+                                    builder.spawn((
+                                        SquareBundle::new(
+                                            if possibilities
+                                                .is_conflicting((*number).try_into().unwrap())
+                                            {
+                                                defaults.conflicting_source_color.clone()
+                                            } else if let Some(strategy) =
+                                                possibilities.has_strategy_effect(the_number)
+                                            {
+                                                if strategy.is_effected() {
+                                                    defaults.strategy_effected_color.clone()
+                                                } else if let Some(color) =
+                                                    strategy_colors.get(&strategy.strategy())
                                                 {
-                                                    defaults.conflicting_source_color.clone()
-                                                } else if let Some(strategy) =
+                                                    color.background.clone()
+                                                } else {
+                                                    defaults.strategy_source_color.clone()
+                                                }
+                                            } else {
+                                                defaults.default_possibilities_block_color.clone()
+                                            },
+                                            &mut meshes,
+                                            spawn_info,
+                                            Some(master_index),
+                                        ),
+                                        Possibilities,
+                                        children![(
+                                            Text2d::new(format!("{}", number)),
+                                            text_font.clone(),
+                                            TextColor({
+                                                if let Some(strategy) =
                                                     possibilities.has_strategy_effect(the_number)
                                                 {
-                                                    if strategy.is_effected() {
-                                                        defaults.strategy_effected_color.clone()
-                                                    } else if let Some(color) =
-                                                        strategy_colors.get(&strategy.strategy())
-                                                    {
-                                                        color.background.clone()
-                                                    } else {
-                                                        defaults.strategy_source_color.clone()
-                                                    }
-                                                } else {
-                                                    defaults
-                                                        .default_possibilities_block_color
-                                                        .clone()
-                                                },
-                                                &mut meshes,
-                                                spawn_info,
-                                                Some(master_index),
-                                            ),
-                                            Possibilities,
-                                            children![(
-                                                Text2d::new(format!("{}", number)),
-                                                text_font.clone(),
-                                                TextColor({
-                                                    if let Some(strategy) = possibilities
-                                                        .has_strategy_effect(the_number)
-                                                    {
-                                                        if strategy.is_source() {
-                                                            if let Some(color) = strategy_colors
-                                                                .get(&strategy.strategy())
-                                                            {
-                                                                color.text
-                                                            } else {
-                                                                defaults.strategy_source_text_color
-                                                            }
+                                                    if strategy.is_source() {
+                                                        if let Some(color) = strategy_colors
+                                                            .get(&strategy.strategy())
+                                                        {
+                                                            color.text
                                                         } else {
-                                                            defaults
-                                                                .default_possibility_number_color
+                                                            defaults.strategy_source_text_color
                                                         }
                                                     } else {
                                                         defaults.default_possibility_number_color
                                                     }
-                                                },),
-                                                TextLayout::new_with_justify(text_justification,),
-                                            )],
-                                        ));
-                                    }
+                                                } else {
+                                                    defaults.default_possibility_number_color
+                                                }
+                                            },),
+                                            TextLayout::new_with_justify(text_justification,),
+                                        )],
+                                    ));
                                 }
-                            });
-                        }
+                            }
+                        });
                     }
-                }
-
-                // Update blocks based on conflicts.
-                if (block.conflicting != snapshot_block.conflicting || active_board_changed.0)
-                    && selected.current != (i, j)
-                {
-                    match &block.conflicting {
-                        Some(sudoku_solver::Conflicting::AffectedBy(_)) => {
-                            material.0 = defaults.conflicting_affected_color.clone();
-                        }
-                        Some(sudoku_solver::Conflicting::Source) => {
-                            material.0 = defaults.conflicting_source_color.clone();
-                        }
-                        Some(sudoku_solver::Conflicting::AffectedByPossibilities { .. }) => {
-                            material.0 = defaults.conflicting_affected_color.clone();
-                        }
-                        _ => {}
-                    }
-                }
-
-                if selected.current == (i, j) {
-                    material.0 = match selected.mode {
-                        SelectionMode::Resolving => defaults.selected_resolving_block_color.clone(),
-                        SelectionMode::Possibilities => {
-                            defaults.selected_possibilities_block_color.clone()
-                        }
-                    };
                 }
             }
 
-            #[cfg(feature = "debug")]
-            println!("Updated ({:?}, {:?})", row, col);
+            // Update blocks based on conflicts.
+            if (block.conflicting != snapshot_block.conflicting || active_board_changed.0)
+                && selected.current != (i, j)
+            {
+                match &block.conflicting {
+                    Some(sudoku_solver::Conflicting::AffectedBy(_)) => {
+                        material.0 = defaults.conflicting_affected_color.clone();
+                    }
+                    Some(sudoku_solver::Conflicting::Source) => {
+                        material.0 = defaults.conflicting_source_color.clone();
+                    }
+                    Some(sudoku_solver::Conflicting::AffectedByPossibilities { .. }) => {
+                        material.0 = defaults.conflicting_affected_color.clone();
+                    }
+                    _ => {}
+                }
+            }
+
+            if selected.current == (i, j) {
+                material.0 = match selected.mode {
+                    SelectionMode::Resolving => defaults.selected_resolving_block_color.clone(),
+                    SelectionMode::Possibilities => {
+                        defaults.selected_possibilities_block_color.clone()
+                    }
+                };
+            }
+        }
+    };
+
+    if (!boards.is_changed() && !active_board_changed.is_changed()) && !should_updates.is_empty() {
+        // This means the system is ran by ShouldUpdate event.
+        #[cfg(feature = "debug")]
+        println!("Seems like we're only updating some blocks.");
+
+        for block_index in should_updates.0.iter() {
+            let block = boards.active_board(active_board).get_block(&block_index);
+            let snapshot_block = snapshots.active_board(active_board).get_block(&block_index);
+            update_process(&block_index, block, snapshot_block);
+        }
+    } else {
+        // Here the changes maybe based on Change in active board, sudoku board and should update events
+        for (row, col) in SudokuNumber::iter_numbers() {
+            let block_index = BlockIndex::new(row, col);
+            let block = boards.active_board(active_board).get_block(&block_index);
+            let snapshot_block = snapshots.active_board(active_board).get_block(&block_index);
+
+            if (block != snapshot_block)
+                || active_board_changed.0
+                || should_updates.contains(&block_index)
+            {
+                #[cfg(feature = "debug")]
+                println!("Block {:?} seems changed.", block_index);
+
+                update_process(&block_index, block, snapshot_block);
+
+                #[cfg(feature = "debug")]
+                println!("Updated ({:?}, {:?})", row, col);
+            }
         }
     }
 
@@ -1462,11 +1484,7 @@ fn on_helper_block_clicked(
     indexes: Query<&HelperBlock>,
 ) {
     if let Ok(block) = indexes.get(over.entity) {
-        if matches!(block.command_type, CommandType::Reset) {
-            commands.run_game_command::<ResetBoardCommand>();
-        } else {
-            commands.trigger(GameInputs::new(block.command_type));
-        }
+        commands.trigger(GameInputs::new(block.command_type));
     }
 }
 
@@ -1475,9 +1493,8 @@ fn on_game_input(
     mut commands: Commands,
     active_board: ActiveBoardProvider,
     mut boards: ResMut<SudokuBoardResources>,
-    mut boards_state: ResMut<BoardsStateMap>,
-    mut selected: ResMut<SelectedBlock>,
-    mut engaging: ResMut<EngagingStrategyMap>,
+    boards_state: Res<BoardsStateMap>,
+    selected: Res<SelectedBlock>,
 ) {
     let active_board = if let Some(active_board) = active_board.active_board() {
         active_board
@@ -1485,71 +1502,14 @@ fn on_game_input(
         return;
     };
 
-    let board = boards.active_board_mut(active_board);
-    let board_state = boards_state.get_mut(active_board);
+    let board_state = boards_state.get(active_board);
 
     match input.event().command_type() {
         CommandType::Number(sudoku_number) => {
-            if board_state
-                .as_ref()
-                .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
-            {
-                // Board in finished state do nothing.
-                return;
-            }
-
-            let block_index =
-                BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
-            let block = board.get_block_mut(&block_index);
-
-            match &block.status {
-                SudokuBlockStatus::Fixed(_) => (),
-                _ => {
-                    let update_result = Some(_update_block(&selected, block, sudoku_number));
-
-                    if let Some(result) = update_result {
-                        match result {
-                            BlockUpdateResult::Cleared => {
-                                board.mark_conflicts(&block_index, None);
-                            }
-                            BlockUpdateResult::Resolved => {
-                                board.mark_conflicts(&block_index, None);
-
-                                let block = board.get_block(&block_index);
-                                if block
-                                    .conflicting
-                                    .as_ref()
-                                    .is_some_and(|f| matches!(f, Conflicting::Source))
-                                {
-                                    // This is a mistake!
-                                    if let Some(state) = board_state {
-                                        state.stats.mistakes += 1;
-                                    }
-                                    #[cfg(feature = "debug")]
-                                    println!("This is a mistake!")
-                                }
-                            }
-                            BlockUpdateResult::Possible { number, is_cleared } => {
-                                board.mark_conflicts(&block_index, Some((number, is_cleared)));
-
-                                let block = board.get_block(&block_index);
-                                let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
-
-                                if poss.is_conflicting(number) {
-                                    // This is also a mistake
-                                    if let Some(state) = board_state {
-                                        state.stats.possibility_mistakes += 1;
-                                    }
-                                    #[cfg(feature = "debug")]
-                                    println!("This is also a mistake!")
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            commands.trigger_game_command_with::<InputNumber>(sudoku_number);
         }
         CommandType::CalculatePossibilities => {
+            let board = boards.active_board_mut(active_board);
             if board_state
                 .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
             {
@@ -1562,6 +1522,7 @@ fn on_game_input(
             board.update_possibilities();
         }
         CommandType::ResolveNakedSingles => {
+            let board = boards.active_board_mut(active_board);
             if board_state
                 .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
             {
@@ -1573,14 +1534,14 @@ fn on_game_input(
             println!("Resolving satisfied blocks (Naked single).");
             board.resolve_satisfied_blocks();
         }
-        CommandType::Reset => {}
+        CommandType::Reset => {
+            commands.trigger_game_command::<ResetBoardCommand>();
+        }
         CommandType::ChangeSelectionMode => {
-            selected.mode = match selected.mode {
-                SelectionMode::Resolving => SelectionMode::Possibilities,
-                SelectionMode::Possibilities => SelectionMode::Resolving,
-            };
+            commands.trigger_game_command::<ChangeSelectionMode>();
         }
         CommandType::ClearBlock => {
+            let board = boards.active_board_mut(active_board);
             if board_state
                 .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
             {
@@ -1601,92 +1562,210 @@ fn on_game_input(
             }
         }
         CommandType::Direction(direction) => {
-            let pervious_selection = selected.block_index();
-
-            match direction {
-                Direction::Up => {
-                    if selected.current.1 > 0 {
-                        selected.current.1 -= 1;
-                    } else {
-                        selected.current.1 = 8;
-                    }
-                }
-                Direction::Down => {
-                    if selected.current.1 < 8 {
-                        selected.current.1 += 1;
-                    } else {
-                        selected.current.1 = 0;
-                    }
-                }
-                Direction::Left => {
-                    if selected.current.0 > 0 {
-                        selected.current.0 -= 1;
-                    } else {
-                        selected.current.0 = 8;
-                    }
-                }
-                Direction::Right => {
-                    if selected.current.0 < 8 {
-                        selected.current.0 += 1;
-                    } else {
-                        selected.current.0 = 0;
-                    }
-                }
-            };
-
-            commands.trigger(ShouldUpdateEvent::AddMany(vec![
-                selected.block_index(),
-                pervious_selection,
-            ]));
+            commands.trigger_game_command_with::<ChangeDirection>(direction);
         }
         CommandType::Strategy(strategy) => {
-            if board_state
-                .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
-            {
-                // Board in finished state do nothing.
-                return;
-            }
+            commands.trigger_game_command_with::<EngageStrategy>(strategy);
+        }
+    }
+}
 
-            if board.get_blocks().filter(|x| x.is_possibilities()).count() == 0 {
-                return;
-            }
+fn _input_number(
+    In(sudoku_number): In<SudokuNumber>,
+    active_board: ActiveBoardProvider,
+    mut boards: ResMut<SudokuBoardResources>,
+    mut boards_state: ResMut<BoardsStateMap>,
+    selected: Res<SelectedBlock>,
+) {
+    let active_board = if let Some(active_board) = active_board.active_board() {
+        active_board
+    } else {
+        return;
+    };
 
-            let mut show_only_effect = false;
-            let engaging = engaging.engaging.entry(*active_board).or_default();
+    let board_state = boards_state.get_mut(active_board);
+    let board = boards.active_board_mut(active_board);
 
-            if engaging.strategy.is_some_and(|f| f == strategy) {
-                // This strategy was engaged before
-                if engaging.showed_effect {
-                    // The effects shown already! Time to take action.
-                    engaging.showed_effect = false;
-                } else {
-                    show_only_effect = true;
-                    engaging.showed_effect = true;
+    if board_state
+        .as_ref()
+        .is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified))
+    {
+        // Board in finished state do nothing.
+        return;
+    }
+
+    let block_index = BlockIndex::from_index(selected.current.1, selected.current.0).unwrap();
+    let block = board.get_block_mut(&block_index);
+
+    match &block.status {
+        SudokuBlockStatus::Fixed(_) => (),
+        _ => {
+            let update_result = Some(_update_block(&selected, block, sudoku_number));
+
+            if let Some(result) = update_result {
+                match result {
+                    BlockUpdateResult::Cleared => {
+                        board.mark_conflicts(&block_index, None);
+                    }
+                    BlockUpdateResult::Resolved => {
+                        board.mark_conflicts(&block_index, None);
+
+                        let block = board.get_block(&block_index);
+                        if block
+                            .conflicting
+                            .as_ref()
+                            .is_some_and(|f| matches!(f, Conflicting::Source))
+                        {
+                            // This is a mistake!
+                            if let Some(state) = board_state {
+                                state.stats.mistakes += 1;
+                            }
+                            #[cfg(feature = "debug")]
+                            println!("This is a mistake!")
+                        }
+                    }
+                    BlockUpdateResult::Possible { number, is_cleared } => {
+                        board.mark_conflicts(&block_index, Some((number, is_cleared)));
+
+                        let block = board.get_block(&block_index);
+                        let poss = block.status.as_possibilities().unwrap(); // This must be possibilities
+
+                        if poss.is_conflicting(number) {
+                            // This is also a mistake
+                            if let Some(state) = board_state {
+                                state.stats.possibility_mistakes += 1;
+                            }
+                            #[cfg(feature = "debug")]
+                            println!("This is also a mistake!")
+                        }
+                    }
                 }
-            } else {
-                // This is a new strategy marker.
-                board.clear_strategy_markers();
-                show_only_effect = true;
-                engaging.showed_effect = true;
-                engaging.strategy = Some(strategy);
-            }
-
-            match strategy {
-                Strategy::HiddenSingle => {
-                    #[cfg(feature = "debug")]
-                    println!("Engaging Hidden single Strategy.");
-                    board.engage_strategy(HiddenSingleStrategy, show_only_effect);
-                }
-                Strategy::NakedPair => {
-                    #[cfg(feature = "debug")]
-                    println!("Engaging Naked pair Strategy.");
-                    board.engage_strategy(NakedPairStrategy, show_only_effect);
-                }
-                _ => (),
             }
         }
     }
 }
+
+create_game_command!(InputNumber, SudokuNumber, _input_number);
+
+create_game_command!(ChangeSelectionMode, |mut commands: Commands,
+                                           mut selected: ResMut<
+    SelectedBlock,
+>| {
+    selected.mode = match selected.mode {
+        SelectionMode::Resolving => SelectionMode::Possibilities,
+        SelectionMode::Possibilities => SelectionMode::Resolving,
+    };
+
+    commands.trigger(ShouldUpdateEvent::AddMany(vec![selected.block_index()]));
+});
+
+fn _change_direction(
+    In(direction): In<Direction>,
+    mut commands: Commands,
+    mut selected: ResMut<SelectedBlock>,
+) {
+    let pervious_selection = selected.block_index();
+
+    match direction {
+        Direction::Up => {
+            if selected.current.1 > 0 {
+                selected.current.1 -= 1;
+            } else {
+                selected.current.1 = 8;
+            }
+        }
+        Direction::Down => {
+            if selected.current.1 < 8 {
+                selected.current.1 += 1;
+            } else {
+                selected.current.1 = 0;
+            }
+        }
+        Direction::Left => {
+            if selected.current.0 > 0 {
+                selected.current.0 -= 1;
+            } else {
+                selected.current.0 = 8;
+            }
+        }
+        Direction::Right => {
+            if selected.current.0 < 8 {
+                selected.current.0 += 1;
+            } else {
+                selected.current.0 = 0;
+            }
+        }
+    };
+
+    commands.trigger(ShouldUpdateEvent::AddMany(vec![
+        selected.block_index(),
+        pervious_selection,
+    ]));
+}
+
+create_game_command!(ChangeDirection, Direction, _change_direction);
+
+fn _engage_strategy(
+    In(strategy): In<Strategy>,
+    active_board: ActiveBoardProvider,
+    mut boards: ResMut<SudokuBoardResources>,
+    mut boards_state: ResMut<BoardsStateMap>,
+    mut engaging: ResMut<EngagingStrategyMap>,
+) {
+    let active_board = if let Some(active_board) = active_board.active_board() {
+        active_board
+    } else {
+        return;
+    };
+
+    let board = boards.active_board_mut(active_board);
+    let board_state = boards_state.get_mut(active_board);
+
+    if board_state.is_some_and(|f| matches!(f.playing_state, BoardPlayingState::FinishedVerified)) {
+        // Board in finished state do nothing.
+        return;
+    }
+
+    if board.get_blocks().filter(|x| x.is_possibilities()).count() == 0 {
+        return;
+    }
+
+    let mut show_only_effect = false;
+    let engaging = engaging.engaging.entry(*active_board).or_default();
+
+    if engaging.strategy.is_some_and(|f| f == strategy) {
+        // This strategy was engaged before
+        if engaging.showed_effect {
+            // The effects shown already! Time to take action.
+            engaging.showed_effect = false;
+        } else {
+            show_only_effect = true;
+            engaging.showed_effect = true;
+        }
+    } else {
+        // This is a new strategy marker.
+        board.clear_strategy_markers();
+        show_only_effect = true;
+        engaging.showed_effect = true;
+        engaging.strategy = Some(strategy);
+    }
+
+    match strategy {
+        Strategy::HiddenSingle => {
+            #[cfg(feature = "debug")]
+            println!("Engaging Hidden single Strategy.");
+            board.engage_strategy(HiddenSingleStrategy, show_only_effect);
+        }
+        Strategy::NakedPair => {
+            #[cfg(feature = "debug")]
+            println!("Engaging Naked pair Strategy.");
+            board.engage_strategy(NakedPairStrategy, show_only_effect);
+        }
+        _ => (),
+    }
+}
+
+create_game_command!(EngageStrategy, Strategy, _engage_strategy);
 
 fn on_helper_block_hovered(
     over: On<Pointer<Over>>,

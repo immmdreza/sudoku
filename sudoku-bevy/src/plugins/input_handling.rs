@@ -91,7 +91,7 @@ fn resolve_satisfied(mut commands: Commands) {
 }
 
 fn reset(mut commands: Commands) {
-    commands.run_game_command::<ResetBoardCommand>();
+    commands.trigger_game_command_with::<ResetBoardCommand>(());
 }
 
 fn change_selection_mode(mut commands: Commands) {
