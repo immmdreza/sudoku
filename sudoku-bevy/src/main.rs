@@ -1,8 +1,12 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::{collections::HashMap, time::Duration};
-use sudoku_bevy::plugins::game_commands::{
-    GameCommand, GameCommandsNoInputExtensions, GameCommandsRegisterExtensions,
+use sudoku_bevy::{
+    extensions::CustomCommands,
+    plugins::game_commands::{
+        GameCommand, GameCommandsNoInputExtensions, GameCommandsRegisterExtensions,
+        InputGameCommandActuatorExtensions,
+    },
 };
 
 use bevy::{
@@ -126,11 +130,10 @@ fn main() {
         .init_resource::<SelectedBlock>()
         .init_resource::<EngagingStrategyMap>()
         .init_resource::<BoardsStateMap>()
-        .init_resource::<ShouldUpdateAnyway>()
+        .add_message::<ShouldUpdateEvent>()
         .init_resource::<StatsTextEntities>()
         .add_observer(update_boards_list)
         .add_observer(on_game_input)
-        .add_observer(on_should_update_event)
         .add_observer(
             |event: On<Add, SudokuBoardVisual>,
              mut commands: Commands,
@@ -152,6 +155,7 @@ fn main() {
                 }
             },
         )
+        .add_observer(update_help_text)
         // Ready state systems
         .add_systems(
             OnEnter(AppState::Ready),
@@ -165,7 +169,7 @@ fn main() {
                     update_board.run_if(
                         resource_changed::<SudokuBoardResources>
                             .or(resource_changed::<ActiveBoardsMapping>)
-                            .or(resource_changed::<ShouldUpdateAnyway>),
+                            .or(on_message::<ShouldUpdateEvent>),
                     ),
                     final_verification.run_if(resource_changed::<SudokuBoardResources>),
                 )
@@ -216,6 +220,7 @@ fn setup_game(
     commands.register_game_command::<EngageStrategy>();
     commands.register_game_command::<ChangeDirection>();
     commands.register_game_command::<ChangeSelectionMode>();
+    commands.register_game_command::<InputNumber>();
 
     let boards = [
         (None, vec![SudokuBoard::default()]),
@@ -327,7 +332,7 @@ fn setup_game(
                             Default::default(),
                         )],
                     ))
-                    .observe(on_helper_block_clicked)
+                    .game_command_click_actuator_with::<InputNumber>(number)
                     .observe(on_helper_block_hovered)
                     .observe(on_pointer_out);
             }
@@ -442,7 +447,7 @@ fn setup_game(
                                 Default::default(),
                             )],
                         ))
-                        .observe(on_helper_block_clicked)
+                        .game_command_click_actuator_with::<EngageStrategy>(*strategy)
                         .observe(on_helper_block_hovered)
                         .observe(on_pointer_out);
                 }
@@ -498,6 +503,15 @@ fn setup_game(
         ));
 
     commands.trigger(UpdateBoardList);
+}
+
+fn update_help_text(
+    ev: On<UpdateHelpText>,
+    help_text: Option<Single<&mut Text2d, With<HelpText>>>,
+) {
+    if let Some(mut help_text) = help_text {
+        help_text.0 = ev.0.clone();
+    }
 }
 
 fn relocate_camera(
@@ -756,7 +770,7 @@ fn update_boards_list(
                                 },
                             ))
                             .observe(board_info_block_del_clicked)
-                            .observe(board_info_block_del_over)
+                            .quick_hover_help_text("Will delete this board")
                             .observe(on_pointer_out);
                     });
                 }
@@ -805,7 +819,7 @@ fn update_boards_list(
                                 },
                             );
                         })
-                        .observe(on_board_stats_over)
+                        .quick_hover_help_text("Shows the state for this board.")
                         .observe(on_pointer_out);
                 });
 
@@ -852,7 +866,7 @@ fn update_boards_list(
                     RequestNewBoardBlock,
                 ))
                 .observe(request_new_board)
-                .observe(request_new_board_over)
+                .quick_hover_help_text("Will create a new board.")
                 .observe(on_pointer_out)
                 .with_children(|builder| {
                     builder
@@ -894,7 +908,7 @@ fn update_boards_list(
                     RequestNewBoardVisual,
                 ))
                 .observe(request_new_board_visual)
-                .observe(request_new_board_visual_over)
+                .quick_hover_help_text("Will create a new board visual.")
                 .observe(on_pointer_out)
                 .with_children(|builder| {
                     builder
@@ -915,10 +929,6 @@ fn update_boards_list(
                 });
         });
     }
-}
-
-fn on_board_stats_over(_ev: On<Pointer<Over>>, mut help_text: Single<&mut Text2d, With<HelpText>>) {
-    help_text.0 = format!("Shows the state for this board.");
 }
 
 #[derive(Debug, Component)]
@@ -947,13 +957,6 @@ fn request_new_board_visual(
 
     let pos = AVAILABLE_BOARD_POSITIONS[visual_count];
     commands.run_system_with(system_id.0, pos);
-}
-
-fn request_new_board_visual_over(
-    _ev: On<Pointer<Over>>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
-) {
-    help_text.0 = "Will create a new board visual.".to_string();
 }
 
 fn request_new_board(
@@ -1002,18 +1005,18 @@ fn board_info_block_clicked(
 
 fn board_info_block_over(
     event: On<Pointer<Over>>,
+    mut commands: Commands,
     board_info_block: Query<&InnerBlock>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
     if let Ok(block_info) = board_info_block.get(event.entity) {
-        help_text.0 = format!(
+        commands.update_help_text(format!(
             "Will switch to board: #{} {}.",
             block_info.index + 1,
             match block_info.difficulty {
                 Some(diff) => diff.to_string(),
                 None => "Unspecified".to_string(),
             },
-        );
+        ));
     }
 }
 
@@ -1052,20 +1055,6 @@ fn board_info_block_del_clicked(
     }
 }
 
-fn board_info_block_del_over(
-    _event: On<Pointer<Over>>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
-) {
-    help_text.0 = format!("Will delete this board");
-}
-
-fn request_new_board_over(
-    _ev: On<Pointer<Over>>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
-) {
-    help_text.0 = "Will create a new board.".to_string();
-}
-
 fn on_pointer_out(_ev: On<Pointer<Out>>, mut help_text: Single<&mut Text2d, With<HelpText>>) {
     help_text.0 = DEFAULT_HELP_TEXT.to_string();
 }
@@ -1083,18 +1072,6 @@ fn check_block_squares(query: Query<(Entity, &SquareIndex), With<Block>>) {
         log::info!("{}- {:?} (index: {:?})", i + 1, index, index.actual_index())
     }
 }
-
-// fn get_board_block_mut<'w, 's, D: QueryData>(
-//     blocks: &'w mut Query<'w, 's, D, With<Block>>,
-//     access_infos: &BlocksAccessInfo,
-//     block_index: &BlockIndex,
-// ) -> Option<D::Item<'w, 's>>
-// where
-//     's: 'w,
-// {
-//     let block_entity = access_infos.get(&block_index)?;
-//     blocks.get_mut(*block_entity).ok()
-// }
 
 fn update_mistakes_text(
     active_board: ActiveBoardProvider,
@@ -1116,45 +1093,9 @@ fn update_mistakes_text(
     }
 }
 
-fn on_should_update_event(
-    event: On<ShouldUpdateEvent>,
-    mut should_updates: ResMut<ShouldUpdateAnyway>,
-) {
-    match event.event() {
-        ShouldUpdateEvent::Clear => {
-            should_updates.clear();
-        }
-        ShouldUpdateEvent::Add(block_index) => {
-            if !should_updates.contains(block_index) {
-                should_updates.push(block_index.clone());
-            }
-        }
-        ShouldUpdateEvent::Remove(block_index) => {
-            if should_updates.contains(block_index) {
-                should_updates.retain(|x| x != block_index);
-            }
-        }
-        ShouldUpdateEvent::AddMany(items) => {
-            for block_index in items {
-                if !should_updates.contains(block_index) {
-                    should_updates.push(block_index.clone());
-                }
-            }
-        }
-    }
-}
-
 #[allow(dead_code)]
-#[derive(Debug, Event, Message)]
-enum ShouldUpdateEvent {
-    Clear,
-    Add(BlockIndex),
-    AddMany(Vec<BlockIndex>),
-    Remove(BlockIndex),
-}
-
-#[derive(Debug, Resource, Deref, DerefMut, Default)]
-struct ShouldUpdateAnyway(Vec<BlockIndex>);
+#[derive(Debug, Message)]
+struct ShouldUpdateEvent(Vec<BlockIndex>);
 
 fn update_board(
     mut commands: Commands,
@@ -1169,7 +1110,7 @@ fn update_board(
     mut snapshots: ResMut<SudokuBoardSnapshotResources>,
     mut blocks: Query<(Entity, &SquareSpawnInfo, &mut MeshMaterial2d<ColorMaterial>), With<Block>>,
     board_visuals: Query<&BlocksAccessInfo, With<SudokuBoardVisual>>,
-    should_updates: Res<ShouldUpdateAnyway>,
+    mut should_updates: MessageReader<ShouldUpdateEvent>,
     selected: Res<SelectedBlock>,
 ) {
     #[cfg(feature = "debug")]
@@ -1358,13 +1299,20 @@ fn update_board(
         #[cfg(feature = "debug")]
         println!("Seems like we're only updating some blocks.");
 
-        for block_index in should_updates.0.iter() {
-            let block = boards.active_board(active_board).get_block(&block_index);
-            let snapshot_block = snapshots.active_board(active_board).get_block(&block_index);
-            update_process(&block_index, block, snapshot_block);
+        for ShouldUpdateEvent(block_indexes) in should_updates.read() {
+            for block_index in block_indexes {
+                let block = boards.active_board(active_board).get_block(block_index);
+                let snapshot_block = snapshots.active_board(active_board).get_block(block_index);
+                update_process(block_index, block, snapshot_block);
+            }
         }
     } else {
         // Here the changes maybe based on Change in active board, sudoku board and should update events
+        let should_updates = should_updates
+            .read()
+            .map(|f| f.0.iter())
+            .flatten()
+            .collect::<Vec<_>>();
         for (row, col) in SudokuNumber::iter_numbers() {
             let block_index = BlockIndex::new(row, col);
             let block = boards.active_board(active_board).get_block(&block_index);
@@ -1372,7 +1320,7 @@ fn update_board(
 
             if (block != snapshot_block)
                 || active_board_changed.0
-                || should_updates.contains(&block_index)
+                || should_updates.contains(&&block_index)
             {
                 #[cfg(feature = "debug")]
                 println!("Block {:?} seems changed.", block_index);
@@ -1385,9 +1333,6 @@ fn update_board(
         }
     }
 
-    if !should_updates.is_empty() {
-        commands.trigger(ShouldUpdateEvent::Clear);
-    }
     active_board_changed.0 = false;
     if snapshot_should_update {
         *snapshots.active_board_mut(active_board) = boards.active_board(active_board).clone();
@@ -1398,8 +1343,8 @@ fn final_verification(
     mut commands: Commands,
     active_board: ActiveBoardProvider,
     boards: Res<SudokuBoardResources>,
+    mut should_updates: MessageWriter<ShouldUpdateEvent>,
     mut boards_state: ResMut<BoardsStateMap>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
 ) {
     let active_board = if let Some(active_board) = active_board.active_board() {
         active_board
@@ -1419,9 +1364,10 @@ fn final_verification(
                 state.playing_state = BoardPlayingState::FinishedVerified;
             }
 
-            help_text.0 =
-                "The sudoku board solved successfully!\nYou can try resetting.".to_string();
-            commands.trigger(ShouldUpdateEvent::AddMany(
+            commands
+                .update_help_text("The sudoku board solved successfully!\nYou can try resetting.");
+
+            should_updates.write(ShouldUpdateEvent(
                 (board.get_blocks().filter_resolved().map(|f| f.index()))
                     .cloned()
                     .collect(),
@@ -1450,11 +1396,11 @@ struct RelatedBoardVisual(Entity);
 
 fn on_block_clicked(
     over: On<Pointer<Click>>,
-    mut commands: Commands,
     indexes: Query<(&RelatedBoardVisual, &SquareIndex), With<Block>>,
     mut selected: ResMut<SelectedBlock>,
     active_visual: Option<ResMut<ActiveBoardVisual>>,
     mut active_board_changed: ResMut<ActiveBoardChanged>,
+    mut should_updates: MessageWriter<ShouldUpdateEvent>,
 ) {
     if let Ok((related_visual, index)) = indexes.get(over.entity) {
         if let Some(mut visual_id) = active_visual {
@@ -1470,7 +1416,8 @@ fn on_block_clicked(
         if selected.current != index || active_board_changed.0 {
             let pervious_selection = selected.block_index();
             selected.current = index;
-            commands.trigger(ShouldUpdateEvent::AddMany(vec![
+
+            should_updates.write(ShouldUpdateEvent(vec![
                 selected.block_index(),
                 pervious_selection,
             ]));
@@ -1647,7 +1594,10 @@ fn _input_number(
 
 create_game_command!(InputNumber, SudokuNumber, _input_number);
 
-create_game_command!(ChangeSelectionMode, |mut commands: Commands,
+create_game_command!(ChangeSelectionMode, |mut should_updates: MessageWriter<
+    ShouldUpdateEvent,
+>,
+
                                            mut selected: ResMut<
     SelectedBlock,
 >| {
@@ -1656,12 +1606,12 @@ create_game_command!(ChangeSelectionMode, |mut commands: Commands,
         SelectionMode::Possibilities => SelectionMode::Resolving,
     };
 
-    commands.trigger(ShouldUpdateEvent::AddMany(vec![selected.block_index()]));
+    should_updates.write(ShouldUpdateEvent(vec![selected.block_index()]));
 });
 
 fn _change_direction(
     In(direction): In<Direction>,
-    mut commands: Commands,
+    mut should_updates: MessageWriter<ShouldUpdateEvent>,
     mut selected: ResMut<SelectedBlock>,
 ) {
     let pervious_selection = selected.block_index();
@@ -1697,7 +1647,7 @@ fn _change_direction(
         }
     };
 
-    commands.trigger(ShouldUpdateEvent::AddMany(vec![
+    should_updates.write(ShouldUpdateEvent(vec![
         selected.block_index(),
         pervious_selection,
     ]));
@@ -1770,7 +1720,7 @@ create_game_command!(EngageStrategy, Strategy, _engage_strategy);
 fn on_helper_block_hovered(
     over: On<Pointer<Over>>,
     indexes: Query<&HelperBlock>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
+    mut commands: Commands,
 ) {
     if let Ok(block) = indexes.get(over.entity) {
         let new_help_text = match &block.command_type {
@@ -1812,7 +1762,7 @@ fn on_helper_block_hovered(
             }
         };
 
-        help_text.0 = new_help_text;
+        commands.update_help_text(new_help_text);
     }
 }
 
@@ -1885,7 +1835,6 @@ fn spawn_sudoku_board_visual(
     defaults: Res<DefaultMaterials>,
     defaults_assets: Res<DefaultAssets>,
     visuals: Query<&SudokuBoardVisual>,
-    help_text: Option<Single<&mut Text2d, With<HelpText>>>,
 ) {
     let width = 630.;
     let top_padding = 15.;
@@ -1894,9 +1843,8 @@ fn spawn_sudoku_board_visual(
     let existing_names = visuals.iter().map(|f| &f.name).collect::<Vec<_>>();
 
     if existing_names.len() >= 5 {
-        if let Some(mut help_text) = help_text {
-            help_text.0 = "To many visuals!".to_string();
-        }
+        commands.update_help_text("To many visuals!");
+
         return;
     }
 
@@ -1998,7 +1946,7 @@ fn spawn_sudoku_board_visual(
                 )],
             ))
             .observe(delete_board_visual)
-            .observe(delete_board_visual_over)
+            .quick_hover_help_text("Will delete this board!")
             .observe(on_pointer_out);
     });
 
@@ -2043,13 +1991,6 @@ fn delete_board_visual(
             }
         }
     }
-}
-
-fn delete_board_visual_over(
-    _ev: On<Pointer<Over>>,
-    mut help_text: Single<&mut Text2d, With<HelpText>>,
-) {
-    help_text.0 = "Will delete this board!".to_string();
 }
 
 // fn on_drag(event: On<Pointer<Drag>>) {}

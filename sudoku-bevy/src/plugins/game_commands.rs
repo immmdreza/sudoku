@@ -40,6 +40,14 @@ pub trait GameCommand<Input: SystemInput = ()>: Sized + 'static {
     }
 }
 
+pub trait NoInputGameCommand: GameCommand<()> {
+    fn actuator() -> GameCommandActuator {
+        GameCommandActuator::new::<Self>()
+    }
+}
+
+impl<T: GameCommand<()>> NoInputGameCommand for T {}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct GameCommandId(TypeId);
 
@@ -111,6 +119,88 @@ impl<'w, 's> GameCommandsNoInputExtensions<'w, 's> for Commands<'w, 's> {
                 }
             },
         );
+    }
+}
+
+#[derive(Component)]
+pub struct GameCommandActuator {
+    system_runner: Box<dyn Fn(&mut Commands) + Send + Sync + 'static>,
+}
+
+impl GameCommandActuator {
+    pub fn new<G: GameCommand>() -> Self {
+        Self {
+            system_runner: Box::new(move |commands| {
+                commands.trigger_game_command::<G>();
+            }),
+        }
+    }
+
+    pub fn new_with<G: GameCommand<Input>, Input: SystemInput + std::marker::Send + 'static>(
+        input: Input::Inner<'static>,
+    ) -> Self
+    where
+        <Input as bevy::prelude::SystemInput>::Inner<'static>: Send + Sync + Clone,
+    {
+        Self {
+            system_runner: Box::new(move |commands| {
+                commands.trigger_game_command_with::<G>(input.clone());
+            }),
+        }
+    }
+}
+
+pub fn activate_game_command_on_click(
+    ev: On<Pointer<Click>>,
+    mut commands: Commands,
+    actuator_query: Query<&GameCommandActuator>,
+) {
+    if let Ok(actuator) = actuator_query.get(ev.entity) {
+        (actuator.system_runner)(&mut commands);
+    }
+}
+
+pub trait GameCommandActuatorExtensions<'a> {
+    fn activate_game_command_on_click(&mut self) -> &mut EntityCommands<'a>;
+}
+
+impl<'a> GameCommandActuatorExtensions<'a> for EntityCommands<'a> {
+    fn activate_game_command_on_click(&mut self) -> &mut EntityCommands<'a> {
+        self.observe(activate_game_command_on_click)
+    }
+}
+
+pub trait InputGameCommandActuatorExtensions<'a, Input: SystemInput + std::marker::Send + 'static> {
+    fn game_command_click_actuator_with<G: GameCommand<Input>>(
+        &mut self,
+        input: Input::Inner<'static>,
+    ) -> &mut EntityCommands<'a>
+    where
+        <Input as bevy::prelude::SystemInput>::Inner<'static>: Send + Sync + Clone;
+}
+
+impl<'a, Input: SystemInput + std::marker::Send + 'static>
+    InputGameCommandActuatorExtensions<'a, Input> for EntityCommands<'a>
+{
+    fn game_command_click_actuator_with<G: GameCommand<Input>>(
+        &mut self,
+        input: Input::Inner<'static>,
+    ) -> &mut EntityCommands<'a>
+    where
+        <Input as bevy::prelude::SystemInput>::Inner<'static>: Send + Sync + Clone,
+    {
+        self.insert(GameCommandActuator::new_with::<G, Input>(input))
+            .activate_game_command_on_click()
+    }
+}
+
+pub trait NoInputGameCommandActuatorExtensions<'a> {
+    fn game_command_click_actuator<G: GameCommand>(&mut self) -> &mut EntityCommands<'a>;
+}
+
+impl<'a> NoInputGameCommandActuatorExtensions<'a> for EntityCommands<'a> {
+    fn game_command_click_actuator<G: GameCommand>(&mut self) -> &mut EntityCommands<'a> {
+        self.insert(G::actuator()).activate_game_command_on_click()
     }
 }
 
